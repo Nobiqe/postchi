@@ -212,8 +212,197 @@ class MenuSystem:
             if choice != "6":
                 input("\nPress Enter to continue...")
 
+    async def list_all_chats(self) -> None:
+        """List all available chats."""
+        print("\n--- Fetching Available Chats ---")
+        
+        if not self.processor:
+            await self._initialize_processor()
+        
+        if not self.processor:
+            print("Error: Cannot initialize Telegram client. Please configure Telegram settings first.")
+            return
+        
+        try:
+            chats = await self.processor.telegram_client.get_all_chats()
+            
+            if not chats:
+                print("No chats found or error fetching chats.")
+                return
+            
+            print(f"\nFound {len(chats)} chats:")
+            print("-" * 80)
+            print(f"{'No.':<4} {'Name':<40} {'ID':<15} {'Type':<15}")
+            print("-" * 80)
+            
+            for i, chat in enumerate(chats, 1):
+                name = chat['name'][:35] + "..." if len(chat['name']) > 35 else chat['name']
+                print(f"{i:<4} {name:<40} {chat['id']:<15} {chat['type']:<15}")
+            
+            # Save to database for future reference
+            for chat in chats:
+                self.db_manager.save_channel_info(chat['id'], chat['name'], chat['type'])
+            
+            print("\nChat information saved to database.")
+            
+        except Exception as e:
+            logging.error(f"Error listing chats: {e}")
+            print("Error fetching chats. Please check your Telegram configuration.")
 
+    async def _initialize_processor(self) -> bool:
+        """Initialize the processor if not already done."""
+        try:
+            tg_config = self.config_manager.telegram_config
+            
+            if not all([tg_config.api_id, tg_config.api_hash, tg_config.phone_number]):
+                print("Telegram configuration is incomplete. Please configure Telegram settings first.")
+                return False
+            
+            if not self.config_manager.ai_config.api_key:
+                print("AI configuration is incomplete. Please configure AI settings first.")
+                return False
+            
+            self.processor = MultiChannelProcessor(self.config_manager)
+            
+            if await self.processor.initialize():
+                print("Processor initialized successfully!")
+                return True
+            else:
+                print("Failed to initialize processor!")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error initializing processor: {e}")
+            print(f"Error initializing processor: {e}")
+            return False
+    
+    async def start_processing(self) -> None:
+        """Start the message processing."""
+        print("\n--- Starting Message Processing ---")
+        
+        if not self.processor:
+            await self._initialize_processor()
+        
+        if not self.processor:
+            print("Cannot start processing without proper initialization.")
+            return
+        
+        active_mappings = self.config_manager.get_active_mappings()
+        if not active_mappings:
+            print("No active channel mappings found!")
+            return
+        
+        print(f"Found {len(active_mappings)} active mappings:")
+        for mapping in active_mappings:
+            print(f"  - {mapping.id}: {mapping.source_channel_name} -> {mapping.target_channel_name}")
+        
+        # Ask user what to do
+        print("\nProcessing options:")
+        print("1. Process historical messages only (last 7 days)")
+        print("2. Start real-time monitoring")
+        print("3. Both (recommended for first run)")
+        
+        choice = input("Enter choice (1-3): ").strip()
+        
+        try:
+            if choice in ['1', '3']:
+                print("\nProcessing historical messages...")
+                for mapping in active_mappings:
+                    print(f"Processing {mapping.id}...")
+                    
+                    # Count messages before processing
+                    since_date = datetime.now() - timedelta(days=7)
+                    messages = await self.processor.telegram_client.get_channel_messages(
+                        mapping.source_channel_id, since_date=since_date
+                    )
+                    
+                    matching_count = 0
+                    for msg_data in messages:
+                        if self.processor._message_matches_criteria(msg_data['text'], mapping):
+                            matching_count += 1
+                    
+                    print(f"  Found {len(messages)} total messages, {matching_count} matching criteria")
+                    
+                    # Now process them
+                    await self.processor.process_historical_messages(mapping.id)
+                
+                print("Historical processing completed!")
+            
+            if choice in ['2', '3']:
+                print("\nStarting real-time monitoring...")
+                print("Messages will be posted every 12 hours automatically.")
+                print("Press Ctrl+C to stop monitoring.")
+                await self.processor.start_monitoring()
+            
+        except KeyboardInterrupt:
+            print("\nStopping monitoring...")
+            if self.processor:
+                self.processor.stop_monitoring()
+        except Exception as e:
+            logging.error(f"Error during processing: {e}")
+            print(f"Error during processing: {e}")
 
+    def view_database_status(self) -> None:
+        """View database status and statistics."""
+        print("\n--- Database Status ---")
+        
+        try:
+            channels = self.db_manager.get_all_channels()
+            print(f"Stored Channels: {len(channels)}")
+            
+            # Get message counts for each mapping
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Total messages
+                cursor.execute("SELECT COUNT(*) FROM processed_messages")
+                total_messages = cursor.fetchone()[0]
+                print(f"Total Processed Messages: {total_messages}")
+                
+                # Unposted messages
+                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 0")
+                unposted_messages = cursor.fetchone()[0]
+                print(f"Unposted Messages: {unposted_messages}")
+                
+                # Posted messages
+                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 1")
+                posted_messages = cursor.fetchone()[0]
+                print(f"Posted Messages: {posted_messages}")
+                
+                # Messages by mapping
+                cursor.execute("""
+                    SELECT mapping_id, COUNT(*) as count, 
+                           SUM(CASE WHEN posted = 1 THEN 1 ELSE 0 END) as posted_count
+                    FROM processed_messages 
+                    GROUP BY mapping_id
+                """)
+                
+                results = cursor.fetchall()
+                if results:
+                    print("\nMessages by Mapping:")
+                    for mapping_id, total, posted in results:
+                        unposted = total - posted
+                        print(f"  {mapping_id}: {total} total, {posted} posted, {unposted} pending")
+                
+                # Recent activity
+                cursor.execute("""
+                    SELECT DATE(created_at) as date, COUNT(*) as count
+                    FROM processed_messages 
+                    WHERE created_at >= date('now', '-7 days')
+                    GROUP BY DATE(created_at)
+                    ORDER BY date DESC
+                """)
+                
+                recent = cursor.fetchall()
+                if recent:
+                    print("\nRecent Activity (last 7 days):")
+                    for date, count in recent:
+                        print(f"  {date}: {count} messages")
+        
+        except Exception as e:
+            logging.error(f"Error getting database status: {e}")
+            print("Error retrieving database status.")
 
 
 
