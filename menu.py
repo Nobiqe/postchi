@@ -75,3 +75,16 @@ class MenuSystem:
         if self.processor:
             await self.processor.disconnect()
 
+    def display_main_menu(self) -> None:
+        """Display the main menu."""
+        print("\n" + "="*60)
+        print("TELEGRAM MULTI-CHANNEL PROCESSOR")
+        print("="*60)
+        print("1. Configure Telegram Settings")
+        print("2. Configure AI Settings")
+        print("3. Manage Channel Mappings")
+        print("4. List All Chats")
+        print("5. Start Processing")
+        print("6. View Database Status")
+        print("7. Exit")
+        print("="*60)
