@@ -304,6 +304,74 @@ class MenuSystem:
         
         choice = input("Enter choice (1-3): ").strip()
         
+        # AI Agent Configuration
+        use_ai_agent = False
+        ai_system_prompt = None
+        custom_footer = None
+        
+        print("\n--- AI Agent Configuration ---")
+        agent_choice = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower()
+        
+        if agent_choice == 'y':
+            # Check if AI is configured
+            if not self.config_manager.ai_config.api_key:
+                print("Error: AI API key not configured! Please configure AI settings first.")
+                return
+            
+            # Test AI connection
+            try:
+                from ai_processor import UniversalMessageProcessor
+                ai_config = self.config_manager.ai_config
+                test_processor = UniversalMessageProcessor(
+                    ai_config.api_key, ai_config.model, ai_config.provider, ai_config.base_url
+                )
+                test_result = await test_processor.process_message("تست", None)
+                if not test_result:
+                    print("Error: Cannot connect to AI API!")
+                    return
+            except Exception as e:
+                print(f"Error connecting to AI: {e}")
+                return
+            
+            use_ai_agent = True
+            print("\nEnter system prompt for AI agent (what you want the agent to do with the text):")
+            print("Example: 'Rewrite this text to be more professional and add trading insights'")
+            ai_system_prompt = input("System prompt: ").strip()
+            
+            if not ai_system_prompt:
+                ai_system_prompt = "Please rewrite this text to be more professional and suitable for a trading channel."
+        
+        # Footer Configuration
+        print("\n--- Footer Configuration ---")
+        print("Choose footer style:")
+        print("1. Default footer (links + hashtags)")
+        print("2. Custom footer")
+        print("3. No footer")
+        
+        footer_choice = input("Enter choice (1-3): ").strip()
+        
+        if footer_choice == "2":
+            print("\nEnter custom footer content:")
+            print("You can use Telegram formatting:")
+            print("- **bold text**")
+            print("- *italic text*") 
+            print("- [link text](URL)")
+            print("- `code text`")
+            print("- #hashtag")
+            custom_footer = input("Custom footer: ").strip()
+            
+            if custom_footer:
+                custom_footer = "\n\n" + custom_footer
+        elif footer_choice == "3":
+            custom_footer = ""
+        
+        # Store configuration for this session
+        session_config = {
+            'use_ai_agent': use_ai_agent,
+            'ai_system_prompt': ai_system_prompt,
+            'custom_footer': custom_footer
+        }
+        
         try:
             if choice in ['1', '3']:
                 print("\nProcessing historical messages...")
@@ -323,8 +391,8 @@ class MenuSystem:
                     
                     print(f"  Found {len(messages)} total messages, {matching_count} matching criteria")
                     
-                    # Now process them
-                    await self.processor.process_historical_messages(mapping.id)
+                    # Process with session config
+                    await self._process_mapping_with_config(mapping, session_config, historical=True)
                 
                 print("Historical processing completed!")
             
@@ -332,6 +400,9 @@ class MenuSystem:
                 print("\nStarting real-time monitoring...")
                 print("Messages will be posted every 12 hours automatically.")
                 print("Press Ctrl+C to stop monitoring.")
+                
+                # Store session config for real-time monitoring
+                self.processor.session_config = session_config
                 await self.processor.start_monitoring()
             
         except KeyboardInterrupt:
@@ -341,6 +412,70 @@ class MenuSystem:
         except Exception as e:
             logging.error(f"Error during processing: {e}")
             print(f"Error during processing: {e}")
+
+    async def _process_mapping_with_config(self, mapping, session_config, historical=False):
+        """Process mapping with session configuration."""
+        try:
+            if historical:
+                since_date = datetime.now() - timedelta(days=7)
+                messages = await self.processor.telegram_client.get_channel_messages(
+                    mapping.source_channel_id, since_date=since_date
+                )
+            else:
+                last_id = self.processor.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+                messages = await self.processor.telegram_client.get_channel_messages(
+                    mapping.source_channel_id, last_message_id=last_id
+                )
+            
+            for msg_data in messages:
+                if self.processor._message_matches_criteria(msg_data['text'], mapping):
+                    await self._process_single_message_with_config(msg_data, mapping, session_config)
+                    
+        except Exception as e:
+            logging.error(f"Error processing mapping {mapping.id} with config: {e}")
+
+    async def _process_single_message_with_config(self, msg_data, mapping, session_config):
+        """Process a single message with session configuration."""
+        try:
+            # Check if already processed
+            last_id = self.processor.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+            if last_id and msg_data['id'] <= last_id:
+                return
+            
+            # Determine prompt to use
+            prompt_to_use = None
+            if session_config['use_ai_agent'] and session_config['ai_system_prompt']:
+                prompt_to_use = f"{session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
+            elif mapping.prompt_template:
+                prompt_to_use = mapping.prompt_template
+            
+            # Process with AI
+            processed_text = await self.processor.ai_processor.process_message(
+                msg_data['text'], 
+                prompt_to_use,
+                session_config['custom_footer']
+            )
+            
+            if processed_text:
+                # Save to database
+                from database import ProcessedMessage
+                message = ProcessedMessage(
+                    message_id=msg_data['id'],
+                    source_channel_id=mapping.source_channel_id,
+                    target_channel_id=mapping.target_channel_id,
+                    mapping_id=mapping.id,
+                    original_message=msg_data['text'],
+                    processed_message=processed_text,
+                    date=msg_data['date']
+                )
+                
+                if self.processor.db_manager.save_processed_message(message):
+                    logging.info(f"Processed and saved message {msg_data['id']} for mapping {mapping.id}")
+                else:
+                    logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
+            
+        except Exception as e:
+            logging.error(f"Error processing message {msg_data['id']} for mapping {mapping.id}: {e}")
 
     def view_database_status(self) -> None:
         """View database status and statistics."""

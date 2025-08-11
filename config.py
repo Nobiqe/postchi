@@ -16,6 +16,9 @@ class ChannelMapping:
     keywords: List[str]
     signature: str
     prompt_template: Optional[str] = None
+    custom_footer: Optional[str] = None
+    use_ai_agent: bool = False
+    ai_system_prompt: Optional[str] = None
     active: bool = True
 
 

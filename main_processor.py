@@ -88,10 +88,20 @@ class MultiChannelProcessor:
             if last_id and msg_data['id'] <= last_id:
                 return
             
+            # Use session config if available
+            prompt_to_use = mapping.prompt_template
+            custom_footer = None
+            
+            if hasattr(self, 'session_config'):
+                if self.session_config['use_ai_agent'] and self.session_config['ai_system_prompt']:
+                    prompt_to_use = f"{self.session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
+                custom_footer = self.session_config['custom_footer']
+            
             # Process with AI
             processed_text = await self.ai_processor.process_message(
                 msg_data['text'], 
-                mapping.prompt_template
+                prompt_to_use,
+                custom_footer
             )
             
             if processed_text:
