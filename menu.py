@@ -129,3 +129,98 @@ class MenuSystem:
                 await test_client.disconnect()
             except Exception as e:
                 print(f"✗ Connection test failed: {e}")
+
+    async def configure_ai(self) -> None:
+        """Configure AI settings with connection testing."""
+        print("\n--- AI Configuration ---")
+        
+        current = self.config_manager.ai_config
+        print(f"Current Provider: {current.provider}")
+        print(f"Current API Key: {'*' * len(current.api_key[:10]) + '...' if current.api_key else 'Not set'}")
+        print(f"Current Model: {current.model}")
+        print(f"Current Base URL: {getattr(current, 'base_url', 'Default')}")
+        
+        # Provider selection
+        print("\nSelect AI Provider:")
+        print("1. Google Gemini")
+        print("2. OpenAI")
+        print("3. OpenRouter")
+        
+        provider_choice = input("Enter choice (1-3): ").strip()
+        if provider_choice == "1":
+            current.provider = "gemini"
+            current.base_url = ""
+        elif provider_choice == "2":
+            current.provider = "openai"
+            current.base_url = "https://api.openai.com/v1/chat/completions"
+        elif provider_choice == "3":
+            current.provider = "openrouter"
+            current.base_url = "https://openrouter.ai/api/v1/chat/completions"
+        
+        # API Key
+        api_key = input("Enter API Key: ").strip()
+        if api_key:
+            current.api_key = api_key
+        
+        # Model
+        if current.provider == "gemini":
+            model = input(f"Enter model (default: gemini-pro): ").strip() or "gemini-pro"
+        elif current.provider == "openai":
+            model = input(f"Enter model (default: gpt-3.5-turbo): ").strip() or "gpt-3.5-turbo"
+        else:  # openrouter
+            model = input(f"Enter model (e.g., deepseek/deepseek-chat-v3-0324:free): ").strip()
+        
+        if model:
+            current.model = model
+        
+        # Custom base URL
+        if current.provider != "gemini":
+            use_custom = input("Use custom base URL? (y/n): ").strip().lower()
+            if use_custom == 'y':
+                base_url = input("Enter base URL: ").strip()
+                if base_url:
+                    current.base_url = base_url
+        
+        # Save and test
+        if self.config_manager.save_config():
+            print("Configuration saved! Testing connection...")
+            await self._test_ai_connection()
+        else:
+            print("Error saving configuration!")
+
+    async def manage_channel_mappings(self) -> None:
+        """Manage channel mappings submenu."""
+        while True:
+            self.display_mapping_menu()
+            choice = input("Enter your choice (1-6): ").strip()
+            
+            if choice == "1":
+                self.view_all_mappings()
+            elif choice == "2":
+                await self.add_new_mapping()
+            elif choice == "3":
+                await self.edit_mapping()
+            elif choice == "4":
+                self.delete_mapping()
+            elif choice == "5":
+                self.toggle_mapping_status()
+            elif choice == "6":
+                break
+            else:
+                print("Invalid choice. Please enter 1-6.")
+            
+            if choice != "6":
+                input("\nPress Enter to continue...")
+
+
+
+
+
+
+
+
+
+
+
+
+
