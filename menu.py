@@ -443,10 +443,174 @@ class MenuSystem:
             print(f"✗ Connection test failed: {e}")
     
 
-
-
-
-
-
-
-
+    def view_all_mappings(self) -> None:
+        """Display all channel mappings."""
+        mappings = self.config_manager.channel_mappings
+        
+        if not mappings:
+            print("No channel mappings configured.")
+            return
+        
+        print("\n--- Current Channel Mappings ---")
+        for mapping_id, mapping in mappings.items():
+            status = "Active" if mapping.active else "Inactive"
+            print(f"\nMapping ID: {mapping_id}")
+            print(f"  Status: {status}")
+            print(f"  Source: {mapping.source_channel_name} (ID: {mapping.source_channel_id})")
+            print(f"  Target: {mapping.target_channel_name} (ID: {mapping.target_channel_id})")
+            print(f"  Keywords: {', '.join(mapping.keywords) if mapping.keywords else 'None'}")
+            print(f"  Signature: {mapping.signature}")
+    
+    async def add_new_mapping(self) -> None:
+        """Add a new channel mapping."""
+        print("\n--- Add New Channel Mapping ---")
+        
+        # Initialize processor to get chat list
+        if not self.processor:
+            await self._initialize_processor()
+        
+        if not self.processor:
+            print("Error: Cannot initialize Telegram client. Please configure Telegram settings first.")
+            return
+        
+        mapping_id = input("Enter mapping ID (unique identifier): ").strip()
+        if mapping_id in self.config_manager.channel_mappings:
+            print("Error: Mapping ID already exists!")
+            return
+        
+        print("\nFetching available chats...")
+        chats = await self.processor.telegram_client.get_all_chats()
+        
+        # Display available chats
+        print("\nAvailable Chats:")
+        for i, chat in enumerate(chats, 1):
+            print(f"{i}. {chat['name']} (ID: {chat['id']}) - Type: {chat['type']}")
+        
+        # Get source channel
+        try:
+            source_idx = int(input("\nSelect source channel number: ")) - 1
+            source_chat = chats[source_idx]
+        except (ValueError, IndexError):
+            print("Invalid selection!")
+            return
+        
+        # Get target channel
+        try:
+            target_idx = int(input("Select target channel number: ")) - 1
+            target_chat = chats[target_idx]
+        except (ValueError, IndexError):
+            print("Invalid selection!")
+            return
+        
+        # Get other details
+        keywords_input = input("Enter keywords (comma-separated, or press Enter for none): ").strip()
+        keywords = [k.strip() for k in keywords_input.split(",")] if keywords_input else []
+        
+        signature = input("Enter required signature (e.g., @Fundamental_View): ").strip()
+        
+        # Create mapping
+        mapping = ChannelMapping(
+            id=mapping_id,
+            source_channel_id=source_chat['id'],
+            source_channel_name=source_chat['name'],
+            target_channel_id=target_chat['id'],
+            target_channel_name=target_chat['name'],
+            keywords=keywords,
+            signature=signature,
+            active=True
+        )
+        
+        if self.config_manager.add_channel_mapping(mapping):
+            print(f"Mapping '{mapping_id}' added successfully!")
+            
+            # Save channel info to database
+            self.db_manager.save_channel_info(source_chat['id'], source_chat['name'], 'source')
+            self.db_manager.save_channel_info(target_chat['id'], target_chat['name'], 'target')
+        else:
+            print("Error adding mapping!")
+    
+    async def edit_mapping(self) -> None:
+        """Edit an existing channel mapping."""
+        self.view_all_mappings()
+        
+        if not self.config_manager.channel_mappings:
+            return
+        
+        mapping_id = input("\nEnter mapping ID to edit: ").strip()
+        mapping = self.config_manager.channel_mappings.get(mapping_id)
+        
+        if not mapping:
+            print("Mapping not found!")
+            return
+        
+        print(f"\nEditing mapping: {mapping_id}")
+        print("Press Enter to keep current values")
+        
+        # Edit keywords
+        current_keywords = ', '.join(mapping.keywords) if mapping.keywords else ''
+        keywords_input = input(f"Keywords (current: {current_keywords}): ").strip()
+        if keywords_input:
+            mapping.keywords = [k.strip() for k in keywords_input.split(",")]
+        
+        # Edit signature
+        signature = input(f"Signature (current: {mapping.signature}): ").strip()
+        if signature:
+            mapping.signature = signature
+        
+        # Custom prompt template
+        if mapping.prompt_template:
+            print("Current custom prompt template is set.")
+        use_custom = input("Do you want to set a custom prompt template? (y/n): ").strip().lower()
+        if use_custom == 'y':
+            print("Enter custom prompt template (use {original_text} as placeholder):")
+            custom_prompt = input().strip()
+            if custom_prompt:
+                mapping.prompt_template = custom_prompt
+        
+        if self.config_manager.save_config():
+            print("Mapping updated successfully!")
+        else:
+            print("Error updating mapping!")
+    
+    def delete_mapping(self) -> None:
+        """Delete a channel mapping."""
+        self.view_all_mappings()
+        
+        if not self.config_manager.channel_mappings:
+            return
+        
+        mapping_id = input("\nEnter mapping ID to delete: ").strip()
+        
+        if mapping_id not in self.config_manager.channel_mappings:
+            print("Mapping not found!")
+            return
+        
+        confirm = input(f"Are you sure you want to delete mapping '{mapping_id}'? (y/n): ").strip().lower()
+        if confirm == 'y':
+            if self.config_manager.remove_channel_mapping(mapping_id):
+                print("Mapping deleted successfully!")
+            else:
+                print("Error deleting mapping!")
+    
+    def toggle_mapping_status(self) -> None:
+        """Toggle mapping active/inactive status."""
+        self.view_all_mappings()
+        
+        if not self.config_manager.channel_mappings:
+            return
+        
+        mapping_id = input("\nEnter mapping ID to toggle: ").strip()
+        mapping = self.config_manager.channel_mappings.get(mapping_id)
+        
+        if not mapping:
+            print("Mapping not found!")
+            return
+        
+        mapping.active = not mapping.active
+        status = "activated" if mapping.active else "deactivated"
+        
+        if self.config_manager.save_config():
+            print(f"Mapping '{mapping_id}' {status} successfully!")
+        else:
+            print("Error updating mapping status!")
+    
