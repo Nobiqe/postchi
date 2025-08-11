@@ -417,7 +417,31 @@ class MenuSystem:
         print("6. Back to Main Menu")
         print("="*50)
     
-     
+    async def _test_ai_connection(self) -> None:
+        """Test AI connection."""
+        try:
+            from ai_processor import UniversalMessageProcessor
+            ai_config = self.config_manager.ai_config
+            
+            processor = UniversalMessageProcessor(
+                ai_config.api_key, 
+                ai_config.model, 
+                ai_config.provider, 
+                ai_config.base_url
+            )
+            
+            # Test with simple message
+            test_result = await processor.process_message("تست اتصال", None)
+            
+            if test_result:
+                print("✓ AI connection successful!")
+                print("✓ Model responding correctly")
+            else:
+                print("✗ AI connection failed!")
+                
+        except Exception as e:
+            print(f"✗ Connection test failed: {e}")
+    
 
 
 
