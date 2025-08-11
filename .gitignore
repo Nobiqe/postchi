@@ -1,1 +1,5 @@
 myenv/
+config.json
+telegram_messages.db
+telegram_processor.log
+session_*
