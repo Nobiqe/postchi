@@ -88,3 +88,44 @@ class MenuSystem:
         print("6. View Database Status")
         print("7. Exit")
         print("="*60)
+
+    async def configure_telegram(self) -> None:
+        """Configure Telegram settings."""
+        print("\n--- Telegram Configuration ---")
+        
+        current = self.config_manager.telegram_config
+        print(f"Current API ID: {current.api_id or 'Not set'}")
+        print(f"Current Phone: {current.phone_number or 'Not set'}")
+        
+        api_id = input("Enter API ID (or press Enter to keep current): ").strip()
+        api_hash = input("Enter API Hash (or press Enter to keep current): ").strip()
+        phone = input("Enter Phone Number (or press Enter to keep current): ").strip()
+        
+        if api_id:
+            current.api_id = api_id
+        if api_hash:
+            current.api_hash = api_hash
+        if phone:
+            current.phone_number = phone
+        
+        if self.config_manager.save_config():
+            print("Telegram configuration saved successfully!")
+        else:
+            print("Error saving configuration!")
+
+        # Test the connection
+        if api_id and api_hash and phone:
+            print("Testing Telegram connection...")
+            try:
+                from telegram_client import TelegramChannelClient
+                test_client = TelegramChannelClient(api_id, api_hash, phone)
+                if await test_client.initialize():
+                    print("✓ Telegram authentication successful!")
+                    # Get user info
+                    me = await test_client.client.get_me()
+                    print(f"✓ Logged in as: {me.first_name} {me.last_name or ''}")
+                else:
+                    print("✗ Telegram authentication failed!")
+                await test_client.disconnect()
+            except Exception as e:
+                print(f"✗ Connection test failed: {e}")
