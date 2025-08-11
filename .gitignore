@@ -3,3 +3,4 @@ config.json
 telegram_messages.db
 telegram_processor.log
 session_*
+__pycache__
