@@ -404,7 +404,20 @@ class MenuSystem:
             logging.error(f"Error getting database status: {e}")
             print("Error retrieving database status.")
 
-
+    def display_mapping_menu(self) -> None:
+        """Display channel mapping management menu."""
+        print("\n" + "="*50)
+        print("CHANNEL MAPPING MANAGEMENT")
+        print("="*50)
+        print("1. View All Mappings")
+        print("2. Add New Mapping")
+        print("3. Edit Mapping")
+        print("4. Delete Mapping")
+        print("5. Toggle Mapping Active/Inactive")
+        print("6. Back to Main Menu")
+        print("="*50)
+    
+     
 
 
 
