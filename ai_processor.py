@@ -28,7 +28,7 @@ class UniversalMessageProcessor:
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(model_name)
     
-    async def process_message(self, message_text: str, custom_prompt: Optional[str] = None) -> Optional[str]:
+    async def process_message(self, message_text: str, custom_prompt: Optional[str] = None, custom_footer: Optional[str] = None) -> Optional[str]:
         """Process a message using the configured AI provider."""
         try:
             prompt = custom_prompt or self.prompt_template
@@ -45,14 +45,14 @@ class UniversalMessageProcessor:
                 return None
             
             if response:
-                # Add the required links and hashtags
-                footer = """
+                # Use custom footer or default
+                footer = custom_footer or """
 
-#Fundamental
-#AskBid
-#اسک_بید
-همین الان ثبت‌نام کنید (https://panel.askbid.ir/register)
-وبسایت (https://askbid.ir/) | اینستاگرام (https://www.instagram.com/askbidmarket/) | آپارات (https://www.aparat.com/askbidmarket) | آکادمی آموزشی (https://www.askbid.ir/academy) |  یوتیوب (https://www.youtube.com/channel/UCBbhqKtlny2W4eerAPXHfBQ)"""
+    #Fundamental
+    #AskBid
+    #اسک_بید
+    همین الان ثبت‌نام کنید (https://panel.askbid.ir/register)
+    وبسایت (https://askbid.ir/) | اینستاگرام (https://www.instagram.com/askbidmarket/) | آپارات (https://www.aparat.com/askbidmarket) | آکادمی آموزشی (https://www.askbid.ir/academy) |  یوتیوب (https://www.youtube.com/channel/UCBbhqKtlny2W4eerAPXHfBQ)"""
                 
                 return response + footer
             
@@ -61,7 +61,8 @@ class UniversalMessageProcessor:
         except Exception as e:
             logging.error(f"Error processing message with {self.provider}: {e}")
             return None
-    
+
+
     async def _process_gemini(self, prompt: str) -> Optional[str]:
         """Process with Gemini."""
         try:
