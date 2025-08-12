@@ -277,7 +277,7 @@ class MenuSystem:
             return False
     
     async def start_processing(self) -> None:
-        """Start the message processing."""
+        """Start the message processing with 18 different modes."""
         print("\n--- Starting Message Processing ---")
         
         if not self.processor:
@@ -296,24 +296,21 @@ class MenuSystem:
         for mapping in active_mappings:
             print(f"  - {mapping.id}: {mapping.source_channel_name} -> {mapping.target_channel_name}")
         
-        # Ask user what to do
+        # Processing type selection
         print("\nProcessing options:")
         print("1. Process historical messages only (last 7 days)")
         print("2. Start real-time monitoring (immediate forwarding)")
         print("3. Both (recommended for first run)")
         
-        choice = input("Enter choice (1-3): ").strip()
+        processing_choice = input("Enter choice (1-3): ").strip()
         
         # AI Agent Configuration
-        use_ai_agent = False
-        ai_system_prompt = None
-        custom_footer = None
-        
         print("\n--- AI Agent Configuration ---")
-        agent_choice = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower()
+        use_ai_agent = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower() == 'y'
         
-        if agent_choice == 'y':
-            # Check if AI is configured
+        ai_system_prompt = None
+        if use_ai_agent:
+            # Check AI configuration
             if not self.config_manager.ai_config.api_key:
                 print("Error: AI API key not configured! Please configure AI settings first.")
                 return
@@ -333,8 +330,7 @@ class MenuSystem:
                 print(f"Error connecting to AI: {e}")
                 return
             
-            use_ai_agent = True
-            print("\nEnter system prompt for AI agent (what you want the agent to do with the text):")
+            print("\nEnter system prompt for AI agent:")
             print("Example: 'Rewrite this text to be more professional and add trading insights'")
             ai_system_prompt = input("System prompt: ").strip()
             
@@ -350,6 +346,7 @@ class MenuSystem:
         
         footer_choice = input("Enter choice (1-3): ").strip()
         
+        custom_footer = None
         if footer_choice == "2":
             print("\nEnter custom footer content:")
             print("You can use Telegram formatting:")
@@ -364,17 +361,39 @@ class MenuSystem:
                 custom_footer = "\n\n" + custom_footer
         elif footer_choice == "3":
             custom_footer = ""
+        elif footer_choice == "1":
+            custom_footer = None  # Use default footer
         
-        # Store configuration for this session
+        # Determine mode number (1-18)
+        mode_base = 0
+        if processing_choice == "1":  # Historical
+            mode_base = 0
+        elif processing_choice == "2":  # Real-time
+            mode_base = 6
+        elif processing_choice == "3":  # Both
+            mode_base = 12
+        
+        ai_offset = 0 if use_ai_agent else 3
+        footer_offset = int(footer_choice) - 1
+        
+        current_mode = mode_base + ai_offset + footer_offset + 1
+        
+        print(f"\n🎯 Running Mode {current_mode}/18:")
+        print(f"   Processing: {['Historical', 'Real-time', 'Both'][int(processing_choice)-1]}")
+        print(f"   AI Agent: {'Enabled' if use_ai_agent else 'Disabled'}")
+        print(f"   Footer: {['Default', 'Custom', 'None'][int(footer_choice)-1]}")
+        
+        # Create session configuration
         session_config = {
             'use_ai_agent': use_ai_agent,
             'ai_system_prompt': ai_system_prompt,
-            'custom_footer': custom_footer
+            'custom_footer': custom_footer,
+            'mode': current_mode
         }
         
         try:
-            if choice in ['1', '3']:
-                print("\nProcessing historical messages...")
+            if processing_choice in ['1', '3']:  # Historical processing
+                print(f"\n📚 Processing historical messages (Mode {current_mode})...")
                 for mapping in active_mappings:
                     print(f"Processing {mapping.id}...")
                     
@@ -394,10 +413,10 @@ class MenuSystem:
                     # Process with session config
                     await self._process_mapping_with_config(mapping, session_config, historical=True)
                 
-                print("Historical processing completed!")
+                print("✅ Historical processing completed!")
             
-            if choice in ['2', '3']:
-                print("\nStarting real-time monitoring...")
+            if processing_choice in ['2', '3']:  # Real-time monitoring
+                print(f"\n🔄 Starting real-time monitoring (Mode {current_mode})...")
                 print("Messages will be forwarded immediately when detected.")
                 print("Press Ctrl+C to stop monitoring.")
                 
@@ -410,7 +429,7 @@ class MenuSystem:
             if self.processor:
                 self.processor.stop_monitoring()
         except Exception as e:
-            logging.error(f"Error during processing: {e}")
+            logging.error(f"Error during processing (Mode {current_mode}): {e}")
             print(f"Error during processing: {e}")
 
     async def _process_mapping_with_config(self, mapping, session_config, historical=False):
