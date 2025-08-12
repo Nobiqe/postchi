@@ -114,14 +114,20 @@ class MultiChannelProcessor:
                 if self.session_config['use_ai_agent'] and self.session_config['ai_system_prompt']:
                     prompt_to_use = f"{self.session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
                 custom_footer = self.session_config['custom_footer']
-            
-            # Process with AI
-            processed_text = await self.ai_processor.process_message(
-                msg_data['text'], 
-                prompt_to_use,
-                custom_footer
-            )
-            
+
+            # NEW: If no AI agent, skip AI processing entirely
+            if hasattr(self, 'session_config') and not self.session_config['use_ai_agent']:
+                processed_text = msg_data['text']  # Use original text
+                if self.session_config.get('custom_footer'):
+                    processed_text += self.session_config['custom_footer']
+            else:
+                # Process with AI
+                processed_text = await self.ai_processor.process_message(
+                    msg_data['text'], 
+                    prompt_to_use,
+                    custom_footer
+                )            
+      
             if processed_text:
                 # Save to database
                 message = ProcessedMessage(
