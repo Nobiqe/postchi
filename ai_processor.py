@@ -46,13 +46,7 @@ class UniversalMessageProcessor:
             
             if response:
                 # Use custom footer or default
-                footer = custom_footer or """
-
-    #Fundamental
-    #AskBid
-    #اسک_بید
-    همین الان ثبت‌نام کنید (https://panel.askbid.ir/register)
-    وبسایت (https://askbid.ir/) | اینستاگرام (https://www.instagram.com/askbidmarket/) | آپارات (https://www.aparat.com/askbidmarket) | آکادمی آموزشی (https://www.askbid.ir/academy) |  یوتیوب (https://www.youtube.com/channel/UCBbhqKtlny2W4eerAPXHfBQ)"""
+                footer = custom_footer or ""
                 
                 return response + footer
             

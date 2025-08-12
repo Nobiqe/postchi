@@ -124,18 +124,17 @@ class ConfigManager:
     
     def create_default_config(self) -> None:
         """Create default configuration."""
-        # Set your provided API key
-        self.ai_config.api_key = "AIzaSyC5OROh5fCG_E8vEax5RhjfeH_CYWDK7xc"
+
         
         # Create default mapping with your channels
         default_mapping = ChannelMapping(
             id="fundamental_to_turkey",
-            source_channel_id=-1001124685506,
-            source_channel_name="ديدگاه بنيادى در بازارهاى مالى",
-            target_channel_id=-1001670168544,
+            source_channel_id=0,
+            source_channel_name="Source Channel Name",
+            target_channel_id=0,
             target_channel_name="turkey",
-            keywords=["@Fundamental_View"],
-            signature="@Fundamental_View"
+            keywords=["@YourSignature"],
+            signature="@YourSignature"
         )
         
         self.channel_mappings[default_mapping.id] = default_mapping
