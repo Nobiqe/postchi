@@ -340,30 +340,47 @@ class MenuSystem:
         # Footer Configuration
         print("\n--- Footer Configuration ---")
         print("Choose footer style:")
-        print("1. Default footer (links + hashtags)")
-        print("2. Custom footer")
+        print("1. Saved footers")
+        print("2. crate Custom footer")
         print("3. No footer")
         
         footer_choice = input("Enter choice (1-3): ").strip()
         
         custom_footer = None
-        if footer_choice == "2":
+        if footer_choice == "1":  # Saved footers
+            if self.config_manager.saved_footers:
+                print("\nSaved footers:")
+                for i, footer in enumerate(self.config_manager.saved_footers, 1):
+                    preview = footer[:50] + "..." if len(footer) > 50 else footer
+                    print(f"{i}. {preview}")
+                try:
+                    footer_idx = int(input("Select footer number: ")) - 1
+                    custom_footer = "\n\n" + self.config_manager.saved_footers[footer_idx]
+                except (ValueError, IndexError):
+                    print("Invalid selection, using no footer")
+                    custom_footer = ""
+            else:
+                print("No saved footers found, using no footer")
+                custom_footer = ""
+        elif footer_choice == "2":  # Custom footer
             print("\nEnter custom footer content:")
             print("You can use Telegram formatting:")
             print("- **bold text**")
-            print("- *italic text*") 
+            print("- *italic text*")
             print("- [link text](URL)")
             print("- `code text`")
             print("- #hashtag")
             custom_footer = input("Custom footer: ").strip()
-            
             if custom_footer:
+                # Save footer option
+                save_footer = input("Save this footer for future use? (y/n): ").strip().lower()
+                if save_footer == 'y' and custom_footer not in self.config_manager.saved_footers:
+                    self.config_manager.saved_footers.append(custom_footer)
+                    self.config_manager.save_config()
                 custom_footer = "\n\n" + custom_footer
-        elif footer_choice == "3":
+        elif footer_choice == "3":  # No footer
             custom_footer = ""
-        elif footer_choice == "1":
-            custom_footer = None  # Use default footer
-        
+
         # Determine mode number (1-18)
         mode_base = 0
         if processing_choice == "1":  # Historical
@@ -372,16 +389,15 @@ class MenuSystem:
             mode_base = 6
         elif processing_choice == "3":  # Both
             mode_base = 12
-        
+
         ai_offset = 0 if use_ai_agent else 3
         footer_offset = int(footer_choice) - 1
-        
         current_mode = mode_base + ai_offset + footer_offset + 1
-        
+
         print(f"\n🎯 Running Mode {current_mode}/18:")
         print(f"   Processing: {['Historical', 'Real-time', 'Both'][int(processing_choice)-1]}")
         print(f"   AI Agent: {'Enabled' if use_ai_agent else 'Disabled'}")
-        print(f"   Footer: {['Default', 'Custom', 'None'][int(footer_choice)-1]}")
+        print(f"   Footer: {['Saved', 'Custom', 'None'][int(footer_choice)-1]}")
         
         # Create session configuration
         session_config = {

@@ -46,6 +46,7 @@ class ConfigManager:
         self.telegram_config = TelegramConfig()
         self.ai_config = AIConfig()
         self.channel_mappings: Dict[str, ChannelMapping] = {}
+        self.saved_footers: List[str] = []
         self.load_config()
     
     def load_config(self) -> None:
@@ -70,7 +71,9 @@ class ConfigManager:
                     for mapping_data in config_data['channel_mappings']:
                         mapping = ChannelMapping(**mapping_data)
                         self.channel_mappings[mapping.id] = mapping
-                        
+                if 'saved_footers' in config_data:
+                    self.saved_footers = config_data['saved_footers']  
+
                 logging.info("Configuration loaded successfully")
             else:
                 logging.info("No config file found, creating default configuration")
@@ -86,7 +89,8 @@ class ConfigManager:
             config_data = {
                 'telegram': asdict(self.telegram_config),
                 'ai': asdict(self.ai_config),
-                'channel_mappings': [asdict(mapping) for mapping in self.channel_mappings.values()]
+                'channel_mappings': [asdict(mapping) for mapping in self.channel_mappings.values()],
+                'saved_footers': self.saved_footers 
             }
             
             with open(self.config_file, 'w', encoding='utf-8') as f:
