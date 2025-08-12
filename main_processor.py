@@ -134,11 +134,8 @@ class MultiChannelProcessor:
                 active_mappings = self.config_manager.get_active_mappings()
                 
                 for mapping in active_mappings:
-                    await self._process_mapping(mapping)
-                    
-                    # Check if it's time to post
-                    if self.db_manager.should_post_now(mapping.id):
-                        await self._post_scheduled_message(mapping)
+                    # Only use the immediate processing method
+                    await self._process_and_post_immediately(mapping)
                 
                 # Wait before next check
                 await asyncio.sleep(60)  # Check every minute
@@ -190,3 +187,26 @@ class MultiChannelProcessor:
     async def disconnect(self) -> None:
         """Disconnect from Telegram."""
         await self.telegram_client.disconnect()
+
+    async def _process_and_post_immediately(self, mapping: ChannelMapping) -> None:
+        """Process new messages and post immediately."""
+        try:
+            last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+            new_messages = await self.telegram_client.get_channel_messages(
+                mapping.source_channel_id, last_message_id=last_id
+            )
+            
+            for msg_data in new_messages:
+                if self._message_matches_criteria(msg_data['text'], mapping):
+                    await self._process_single_message(msg_data, mapping)
+                    
+                    # Post immediately after processing
+                    messages = self.db_manager.get_unposted_messages(mapping.id, 1)
+                    if messages:
+                        message = messages[0]
+                        if await self.telegram_client.send_message(mapping.target_channel_id, message.processed_message):
+                            self.db_manager.mark_as_posted(message.message_id, mapping.id)
+                            logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
+                            
+        except Exception as e:
+            logging.error(f"Error in immediate processing for mapping {mapping.id}: {e}")        

@@ -299,7 +299,7 @@ class MenuSystem:
         # Ask user what to do
         print("\nProcessing options:")
         print("1. Process historical messages only (last 7 days)")
-        print("2. Start real-time monitoring")
+        print("2. Start real-time monitoring (immediate forwarding)")
         print("3. Both (recommended for first run)")
         
         choice = input("Enter choice (1-3): ").strip()
@@ -398,7 +398,7 @@ class MenuSystem:
             
             if choice in ['2', '3']:
                 print("\nStarting real-time monitoring...")
-                print("Messages will be posted every 12 hours automatically.")
+                print("Messages will be forwarded immediately when detected.")
                 print("Press Ctrl+C to stop monitoring.")
                 
                 # Store session config for real-time monitoring
