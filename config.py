@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 import logging
-
+from datetime import datetime
 
 @dataclass
 class ChannelMapping:
@@ -21,6 +21,12 @@ class ChannelMapping:
     ai_system_prompt: Optional[str] = None
     active: bool = True
 
+@dataclass
+class SavedFooter:
+    """Data class for saved footers."""
+    name: str
+    content: str
+    created_at: datetime
 
 @dataclass
 class TelegramConfig:
@@ -46,7 +52,7 @@ class ConfigManager:
         self.telegram_config = TelegramConfig()
         self.ai_config = AIConfig()
         self.channel_mappings: Dict[str, ChannelMapping] = {}
-        self.saved_footers: List[str] = []
+        self.saved_footers: List[SavedFooter] = []
         self.load_config()
     
     def load_config(self) -> None:
@@ -71,8 +77,15 @@ class ConfigManager:
                     for mapping_data in config_data['channel_mappings']:
                         mapping = ChannelMapping(**mapping_data)
                         self.channel_mappings[mapping.id] = mapping
+
                 if 'saved_footers' in config_data:
-                    self.saved_footers = config_data['saved_footers']  
+                    self.saved_footers = [
+                        SavedFooter(
+                            name=footer['name'],
+                            content=footer['content'],
+                            created_at=datetime.fromisoformat(footer['created_at'])
+                        ) for footer in config_data['saved_footers']
+                    ]
 
                 logging.info("Configuration loaded successfully")
             else:
@@ -90,7 +103,13 @@ class ConfigManager:
                 'telegram': asdict(self.telegram_config),
                 'ai': asdict(self.ai_config),
                 'channel_mappings': [asdict(mapping) for mapping in self.channel_mappings.values()],
-                'saved_footers': self.saved_footers 
+                'saved_footers': [
+                    {
+                        'name': footer.name,
+                        'content': footer.content,
+                        'created_at': footer.created_at.isoformat()
+                    } for footer in self.saved_footers
+                ]
             }
             
             with open(self.config_file, 'w', encoding='utf-8') as f:

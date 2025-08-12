@@ -5,7 +5,9 @@ from main_processor import MultiChannelProcessor
 from database import DatabaseManager
 import logging
 from datetime import datetime, timedelta
-
+from typing import Optional
+from datetime import datetime
+from config import SavedFooter  # Add this import
 
 class MenuSystem:
     """Interactive menu system for the application."""
@@ -307,7 +309,7 @@ class MenuSystem:
         # AI Agent Configuration
         print("\n--- AI Agent Configuration ---")
         use_ai_agent = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower() == 'y'
-        
+
         ai_system_prompt = None
         if use_ai_agent:
             # Check AI configuration
@@ -336,50 +338,31 @@ class MenuSystem:
             
             if not ai_system_prompt:
                 ai_system_prompt = "Please rewrite this text to be more professional and suitable for a trading channel."
-        
-        # Footer Configuration
-        print("\n--- Footer Configuration ---")
-        print("Choose footer style:")
-        print("1. Saved footers")
-        print("2. crate Custom footer")
-        print("3. No footer")
-        
-        footer_choice = input("Enter choice (1-3): ").strip()
-        
+
+        # Footer Configuration (MOVED OUTSIDE the AI if block)
         custom_footer = None
-        if footer_choice == "1":  # Saved footers
-            if self.config_manager.saved_footers:
-                print("\nSaved footers:")
-                for i, footer in enumerate(self.config_manager.saved_footers, 1):
-                    preview = footer[:50] + "..." if len(footer) > 50 else footer
-                    print(f"{i}. {preview}")
-                try:
-                    footer_idx = int(input("Select footer number: ")) - 1
-                    custom_footer = "\n\n" + self.config_manager.saved_footers[footer_idx]
-                except (ValueError, IndexError):
-                    print("Invalid selection, using no footer")
-                    custom_footer = ""
-            else:
-                print("No saved footers found, using no footer")
+        while True:
+            print("\n--- Footer Configuration ---")
+            print("Choose footer style:")
+            print("1. Saved footers")
+            print("2. Create Custom footer")
+            print("3. No footer")
+            
+            footer_choice = input("Enter choice (1-3): ").strip()
+            
+            if footer_choice == "1":  # Saved footers
+                selected_footer = self.show_saved_footers_menu()
+                if selected_footer is not None:
+                    custom_footer = selected_footer
+                    break
+            elif footer_choice == "2":  # Custom footer
+                custom_footer = self.create_custom_footer()
+                break
+            elif footer_choice == "3":  # No footer
                 custom_footer = ""
-        elif footer_choice == "2":  # Custom footer
-            print("\nEnter custom footer content:")
-            print("You can use Telegram formatting:")
-            print("- **bold text**")
-            print("- *italic text*")
-            print("- [link text](URL)")
-            print("- `code text`")
-            print("- #hashtag")
-            custom_footer = input("Custom footer: ").strip()
-            if custom_footer:
-                # Save footer option
-                save_footer = input("Save this footer for future use? (y/n): ").strip().lower()
-                if save_footer == 'y' and custom_footer not in self.config_manager.saved_footers:
-                    self.config_manager.saved_footers.append(custom_footer)
-                    self.config_manager.save_config()
-                custom_footer = "\n\n" + custom_footer
-        elif footer_choice == "3":  # No footer
-            custom_footer = ""
+                break
+            else:
+                print("Invalid choice. Please enter 1-3.")
 
         # Determine mode number (1-18)
         mode_base = 0
@@ -783,4 +766,159 @@ class MenuSystem:
             print(f"Mapping '{mapping_id}' {status} successfully!")
         else:
             print("Error updating mapping status!")
+
+
+
+    def show_saved_footers_menu(self):
+        """Show saved footers menu and return selected footer content."""
+        while True:
+            if not self.config_manager.saved_footers:
+                print("No saved footers found.")
+                return ""
+            
+            print("\n--- Saved Footers ---")
+            print("Select a number to preview footer, type 5 to return to footer menu")
+            
+            # Sort by date (newest first)
+            sorted_footers = sorted(self.config_manager.saved_footers, 
+                                key=lambda x: x.created_at if hasattr(x, 'created_at') else datetime.now(), 
+                                reverse=True)
+            
+            for i, footer in enumerate(sorted_footers, 1):
+                date_str = footer.created_at.strftime('%Y-%m-%d') if hasattr(footer, 'created_at') else 'Unknown'
+                print(f"{i}. {footer.name} ({date_str})")
+            
+            choice = input("\nEnter choice: ").strip()
+            
+            if choice == "5":
+                return None  # Return to footer menu
+            
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(sorted_footers):
+                    return self.show_footer_preview(sorted_footers[idx])
+                else:
+                    print("Invalid selection!")
+            except ValueError:
+                print("Please enter a number!")
+
+    def show_footer_preview(self, footer):
+        """Show footer preview with options."""
+        while True:
+            print(f"\n--- Footer Preview: {footer.name} ---")
+            print("Content:")
+            print("-" * 40)
+            print(footer.content)
+            print("-" * 40)
+            print("\nGuidelines:")
+            print("- Press Enter: Select this footer")
+            print("- Type 0: Delete this footer")
+            print("- Type 5: Return to footer list")
+            print("- Leave blank + Enter: Continue without footer")
+            
+            choice = input("\nYour choice: ").strip()
+            
+            if choice == "":
+                return "\n\n" + footer.content
+            elif choice == "0":
+                confirm = input(f"Delete '{footer.name}'? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    self.config_manager.saved_footers.remove(footer)
+                    self.config_manager.save_config()
+                    print("Footer deleted!")
+                    return None  # Return to list
+            elif choice == "5":
+                return None  # Return to list
+            else:
+                print("Invalid choice!")
+
+    def create_custom_footer(self):
+        """Create a new custom footer using system editor."""
+        import tempfile
+        import os
+        import subprocess
+        
+        print("\nCreate Custom Footer:")
+        print("Opening text editor...")
+        
+        # Create temporary file with instructions
+        instructions = """## Telegram Footer Template
+    ## Delete these instruction lines and write your footer below
+    ## 
+    ## Telegram Formatting Guide:
+    ## **bold text**
+    ## *italic text*
+    ## [link text](URL)
+    ## `code text`
+    ## #hashtag
+    ## 
+    ## Example:
+    ## Visit: https://example.com
+    ## Follow: @username
+    ## 
+    ## Write your footer content below:
+
+    """
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+            temp_file.write(instructions)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Open editor based on OS
+            if os.name == 'nt':  # Windows
+                os.startfile(temp_file_path)
+            elif os.name == 'posix':  # Linux/Mac
+                editor = os.environ.get('EDITOR', 'nano')  # Default to nano
+                subprocess.run([editor, temp_file_path])
+            
+            input("Press Enter after you've finished editing and saved the file...")
+            
+            # Read the content
+            with open(temp_file_path, 'r') as f:
+                content = f.read()
+            
+            # Remove instruction lines (lines starting with #)
+            lines = content.split('\n')
+            footer_lines = [line for line in lines if not line.strip().startswith('#')]
+            custom_footer = '\n'.join(footer_lines).strip()
+            
+            if custom_footer:
+                # Get footer name
+                footer_name = input("\nEnter name for this footer: ").strip()
+                if not footer_name:
+                    footer_name = f"Footer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                
+                # Check for duplicate names
+                existing_names = [f.name for f in self.config_manager.saved_footers]
+                if footer_name in existing_names:
+                    counter = 1
+                    while f"{footer_name}_{counter}" in existing_names:
+                        counter += 1
+                    footer_name = f"{footer_name}_{counter}"
+                
+                # Save footer
+                new_footer = SavedFooter(
+                    name=footer_name,
+                    content=custom_footer,
+                    created_at=datetime.now()
+                )
+                
+                self.config_manager.saved_footers.append(new_footer)
+                self.config_manager.save_config()
+                print(f"Footer saved as '{footer_name}'")
+                
+                return "\n\n" + custom_footer
+            else:
+                print("No content entered.")
+                return ""
+                
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        
+        return ""
     
