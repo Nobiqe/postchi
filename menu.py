@@ -417,11 +417,17 @@ class MenuSystem:
             if processing_choice in ['2', '3']:  # Real-time monitoring
                 print(f"\n🔄 Starting real-time monitoring (Mode {current_mode})...")
                 print("Messages will be forwarded immediately when detected.")
-                print("Press Ctrl+C to stop monitoring.")
+                print("\n" + "="*60)
+                print("MONITORING ACTIVE - Choose an option:")
+                print("  Press '5' + Enter: Stop and return to main menu")
+                print("  Press Ctrl+C: Force stop")
+                print("="*60)
                 
                 # Store session config for real-time monitoring
                 self.processor.session_config = session_config
-                await self.processor.start_monitoring()
+                
+                # Start monitoring with exit option
+                await self._start_monitoring_with_exit()
             
         except KeyboardInterrupt:
             print("\nStopping monitoring...")
@@ -430,6 +436,68 @@ class MenuSystem:
         except Exception as e:
             logging.error(f"Error during processing (Mode {current_mode}): {e}")
             print(f"Error during processing: {e}")
+
+
+    async def _start_monitoring_with_exit(self) -> None:
+        """Start monitoring with option to exit gracefully."""
+        import threading
+        import sys
+        
+        # Flag to control monitoring
+        monitoring_active = True
+        
+        def input_thread():
+            """Thread to handle user input."""
+            nonlocal monitoring_active
+            while monitoring_active:
+                try:
+                    user_input = input().strip()
+                    if user_input == '5':
+                        print("\n⏹️  Stopping monitoring and returning to main menu...")
+                        monitoring_active = False
+                        if self.processor:
+                            self.processor.stop_monitoring()
+                        break
+                except EOFError:
+                    # Handle Ctrl+D
+                    break
+                except KeyboardInterrupt:
+                    # Handle Ctrl+C in input thread
+                    break
+        
+        # Start input thread
+        input_thread_obj = threading.Thread(target=input_thread, daemon=True)
+        input_thread_obj.start()
+        
+        # Start monitoring
+        self.processor.is_running = True
+        logging.info("Starting multi-channel monitoring...")
+        
+        try:
+            while self.processor.is_running and monitoring_active:
+                try:
+                    active_mappings = self.config_manager.get_active_mappings()
+                    
+                    for mapping in active_mappings:
+                        if not monitoring_active:
+                            break
+                        # Only use the immediate processing method
+                        await self.processor._process_and_post_immediately(mapping)
+                    
+                    # Wait before next check
+                    await asyncio.sleep(5)  # Check every 5 seconds
+                    
+                except Exception as e:
+                    logging.error(f"Error in monitoring loop: {e}")
+                    await asyncio.sleep(5)
+                    
+        except KeyboardInterrupt:
+            print("\n⏹️  Monitoring stopped by user.")
+        finally:
+            monitoring_active = False
+            if self.processor:
+                self.processor.stop_monitoring()
+            print("✅ Returned to main menu.")
 
     async def _process_mapping_with_config(self, mapping, session_config, historical=False):
         """Process mapping with session configuration."""
