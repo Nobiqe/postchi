@@ -67,18 +67,36 @@ class MultiChannelProcessor:
     def _message_matches_criteria(self, message_text: str, mapping: ChannelMapping) -> bool:
         """Check if message matches the mapping criteria."""
         if not message_text:
+            print(f"      ❌ Empty message text")
             return False
         
-        # Check for signature
-        if mapping.signature and mapping.signature not in message_text:
-            return False
+        print(f"      Checking criteria for: '{message_text[:30]}...'")
+        print(f"      Required signature: '{mapping.signature}'")
+        print(f"      Required keywords: {mapping.keywords}")
         
-        # Check for keywords
+        # If no signature and no keywords are set, accept all messages
+        if not mapping.signature and not mapping.keywords:
+            print(f"      ✅ No criteria set - accepting all messages")
+            return True
+        
+        message_lower = message_text.lower()
+        
+        # Check for signature (if set)
+        signature_match = True
+        if mapping.signature:
+            signature_match = mapping.signature.lower() in message_lower
+            print(f"      Signature match: {signature_match}")
+        
+        # Check for keywords (if set)
+        keyword_match = True
         if mapping.keywords:
-            message_lower = message_text.lower()
-            return any(keyword.lower() in message_lower for keyword in mapping.keywords)
+            keyword_matches = [keyword.lower() in message_lower for keyword in mapping.keywords]
+            keyword_match = any(keyword_matches)
+            print(f"      Keyword matches: {keyword_matches} -> {keyword_match}")
         
-        return True
+        result = signature_match and keyword_match
+        print(f"      Final result: {result}")
+        return result
     
     async def _process_single_message(self, msg_data: Dict[str, Any], mapping: ChannelMapping) -> None:
         """Process a single message."""
@@ -138,11 +156,11 @@ class MultiChannelProcessor:
                     await self._process_and_post_immediately(mapping)
                 
                 # Wait before next check
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(5)  # Check every minute
                 
             except Exception as e:
                 logging.error(f"Error in monitoring loop: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(5)
     
     async def _process_mapping(self, mapping: ChannelMapping) -> None:
         """Process new messages for a specific mapping."""
@@ -189,24 +207,63 @@ class MultiChannelProcessor:
         await self.telegram_client.disconnect()
 
     async def _process_and_post_immediately(self, mapping: ChannelMapping) -> None:
-        """Process new messages and post immediately."""
+        """Process new messages, save to database, then post immediately."""
         try:
+            print(f"\n🔍 Checking mapping: {mapping.id}")
+            print(f"   Source: {mapping.source_channel_id} -> Target: {mapping.target_channel_id}")
+            
             last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+            print(f"   Last processed message ID: {last_id}")
+            
             new_messages = await self.telegram_client.get_channel_messages(
                 mapping.source_channel_id, last_message_id=last_id
             )
             
-            for msg_data in new_messages:
-                if self._message_matches_criteria(msg_data['text'], mapping):
+            print(f"   Found {len(new_messages)} new messages")
+            
+            for i, msg_data in enumerate(new_messages):
+                print(f"\n📨 Message {i+1}: ID={msg_data['id']}")
+                print(f"    Text: '{msg_data['text'][:50]}...' (length: {len(msg_data['text'])})")
+                print(f"    Date: {msg_data['date']}")
+                
+                matches = self._message_matches_criteria(msg_data['text'], mapping)
+                print(f"    Matches criteria: {matches}")
+                
+                if matches:
+                    print(f"    ✅ Processing message {msg_data['id']}")
+                    
+                    # First process and save to database
                     await self._process_single_message(msg_data, mapping)
                     
-                    # Post immediately after processing
-                    messages = self.db_manager.get_unposted_messages(mapping.id, 1)
-                    if messages:
-                        message = messages[0]
-                        if await self.telegram_client.send_message(mapping.target_channel_id, message.processed_message):
-                            self.db_manager.mark_as_posted(message.message_id, mapping.id)
-                            logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
+                    # Then get the saved message and post it
+                    unposted_messages = self.db_manager.get_unposted_messages(mapping.id, 1)
+                    print(f"    Found {len(unposted_messages)} unposted messages")
+                    
+                    if unposted_messages:
+                        message = unposted_messages[0]
+                        print(f"    Unposted message ID: {message.message_id}")
+                        
+                        # Check if this is the message we just processed
+                        if message.message_id == msg_data['id']:
+                            print(f"    📤 Sending to channel {mapping.target_channel_id}")
+                            print(f"    Message content: '{message.processed_message[:100]}...'")
                             
+                            success = await self.telegram_client.send_message(mapping.target_channel_id, message.processed_message)
+                            
+                            if success:
+                                self.db_manager.mark_as_posted(message.message_id, mapping.id)
+                                print(f"    ✅ Successfully posted message {message.message_id}")
+                                logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
+                            else:
+                                print(f"    ❌ Failed to send message {message.message_id}")
+                                logging.error(f"Failed to send message {message.message_id} for mapping {mapping.id}")
+                        else:
+                            print(f"    ⚠️  Message ID mismatch: expected {msg_data['id']}, got {message.message_id}")
+                    else:
+                        print(f"    ❌ No unposted messages found after processing")
+                else:
+                    print(f"    ⏭️  Skipping message (doesn't match criteria)")
+                    
         except Exception as e:
-            logging.error(f"Error in immediate processing for mapping {mapping.id}: {e}")        
+            print(f"❌ Error in immediate processing for mapping {mapping.id}: {e}")
+            logging.error(f"Error in immediate processing for mapping {mapping.id}: {e}")
