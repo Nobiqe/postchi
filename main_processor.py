@@ -99,7 +99,7 @@ class MultiChannelProcessor:
         return result
     
     async def _process_single_message(self, msg_data: Dict[str, Any], mapping: ChannelMapping) -> None:
-        """Process a single message."""
+        """Process a single message with proper media handling."""
         try:
             # Check if already processed
             last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
@@ -115,7 +115,7 @@ class MultiChannelProcessor:
                     prompt_to_use = f"{self.session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
                 custom_footer = self.session_config['custom_footer']
 
-            # NEW: If no AI agent, skip AI processing entirely
+            # Process text with AI or use original
             if hasattr(self, 'session_config') and not self.session_config['use_ai_agent']:
                 processed_text = msg_data['text']  # Use original text
                 if self.session_config.get('custom_footer'):
@@ -129,7 +129,24 @@ class MultiChannelProcessor:
                 )            
       
             if processed_text:
-                # Save to database
+                # Handle media download if enabled and present
+                media_path = None
+                if (hasattr(self, 'session_config') and 
+                    self.session_config.get('include_media') and 
+                    msg_data.get('has_media')):
+                    
+                    print(f"    🎬 Downloading media for message {msg_data['id']}")
+                    media_path = await self.telegram_client.download_media(
+                        msg_data['id'], 
+                        mapping.source_channel_id, 
+                        msg_data.get('media_file_id')
+                    )
+                    if media_path:
+                        print(f"    ✅ Media downloaded to: {media_path}")
+                    else:
+                        print(f"    ❌ Failed to download media")
+
+                # Save to database with media info
                 message = ProcessedMessage(
                     message_id=msg_data['id'],
                     source_channel_id=mapping.source_channel_id,
@@ -137,7 +154,11 @@ class MultiChannelProcessor:
                     mapping_id=mapping.id,
                     original_message=msg_data['text'],
                     processed_message=processed_text,
-                    date=msg_data['date']
+                    date=msg_data['date'],
+                    has_media=msg_data.get('has_media', False),
+                    media_type=msg_data.get('media_type'),
+                    media_path=media_path,
+                    media_file_id=msg_data.get('media_file_id')
                 )
                 
                 if self.db_manager.save_processed_message(message):
@@ -213,7 +234,7 @@ class MultiChannelProcessor:
         await self.telegram_client.disconnect()
 
     async def _process_and_post_immediately(self, mapping: ChannelMapping) -> None:
-        """Process new messages, save to database, then post immediately."""
+        """Process new messages, save to database, then post immediately with media."""
         try:
             print(f"\n🔍 Checking mapping: {mapping.id}")
             print(f"   Source: {mapping.source_channel_id} -> Target: {mapping.target_channel_id}")
@@ -246,6 +267,8 @@ class MultiChannelProcessor:
                 print(f"\n📨 Message {i+1}: ID={msg_data['id']}")
                 print(f"    Text: '{msg_data['text'][:50]}...' (length: {len(msg_data['text'])})")
                 print(f"    Date: {msg_data['date']}")
+                print(f"    Has Media: {msg_data.get('has_media', False)}")
+                print(f"    Media Type: {msg_data.get('media_type', 'None')}")
                 
                 matches = self._message_matches_criteria(msg_data['text'], mapping)
                 print(f"    Matches criteria: {matches}")
@@ -269,11 +292,25 @@ class MultiChannelProcessor:
                             print(f"    📤 Sending to channel {mapping.target_channel_id}")
                             print(f"    Message content: '{message.processed_message[:100]}...'")
                             
-                            success = await self.telegram_client.send_message(mapping.target_channel_id, message.processed_message)
+                            # Send with media if available
+                            if message.has_media and message.media_path:
+                                print(f"    🎬 Including media: {message.media_path}")
+                                success = await self.telegram_client.send_message(
+                                    mapping.target_channel_id, 
+                                    message.processed_message,
+                                    message.media_path
+                                )
+                            else:
+                                success = await self.telegram_client.send_message(
+                                    mapping.target_channel_id, 
+                                    message.processed_message
+                                )
                             
                             if success:
                                 self.db_manager.mark_as_posted(message.message_id, mapping.id)
                                 print(f"    ✅ Successfully posted message {message.message_id}")
+                                if message.has_media:
+                                    print(f"    ✅ Media forwarded successfully")
                                 logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
                             else:
                                 print(f"    ❌ Failed to send message {message.message_id}")
@@ -283,7 +320,7 @@ class MultiChannelProcessor:
                     else:
                         print(f"    ❌ No unposted messages found after processing")
                 else:
-                    print(f"    ⭐ Skipping message (doesn't match criteria)")
+                    print(f"    ⭕ Skipping message (doesn't match criteria)")
                     
         except Exception as e:
             print(f"❌ Error in immediate processing for mapping {mapping.id}: {e}")
