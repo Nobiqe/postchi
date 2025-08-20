@@ -570,66 +570,30 @@ class MenuSystem:
             logging.error(f"Error processing message {msg_data['id']} for mapping {mapping.id}: {e}")
 
     def view_database_status(self) -> None:
-        """View database status and statistics."""
-        print("\n--- Database Status ---")
-        
-        try:
-            channels = self.db_manager.get_all_channels()
-            print(f"Stored Channels: {len(channels)}")
+        """View database status and manage data."""
+        while True:
+            self.display_database_menu()
+            choice = input("Enter your choice (1-7): ").strip()
             
-            # Get message counts for each mapping
-            import sqlite3
-            with sqlite3.connect(self.db_manager.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Total messages
-                cursor.execute("SELECT COUNT(*) FROM processed_messages")
-                total_messages = cursor.fetchone()[0]
-                print(f"Total Processed Messages: {total_messages}")
-                
-                # Unposted messages
-                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 0")
-                unposted_messages = cursor.fetchone()[0]
-                print(f"Unposted Messages: {unposted_messages}")
-                
-                # Posted messages
-                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 1")
-                posted_messages = cursor.fetchone()[0]
-                print(f"Posted Messages: {posted_messages}")
-                
-                # Messages by mapping
-                cursor.execute("""
-                    SELECT mapping_id, COUNT(*) as count, 
-                           SUM(CASE WHEN posted = 1 THEN 1 ELSE 0 END) as posted_count
-                    FROM processed_messages 
-                    GROUP BY mapping_id
-                """)
-                
-                results = cursor.fetchall()
-                if results:
-                    print("\nMessages by Mapping:")
-                    for mapping_id, total, posted in results:
-                        unposted = total - posted
-                        print(f"  {mapping_id}: {total} total, {posted} posted, {unposted} pending")
-                
-                # Recent activity
-                cursor.execute("""
-                    SELECT DATE(created_at) as date, COUNT(*) as count
-                    FROM processed_messages 
-                    WHERE created_at >= date('now', '-7 days')
-                    GROUP BY DATE(created_at)
-                    ORDER BY date DESC
-                """)
-                
-                recent = cursor.fetchall()
-                if recent:
-                    print("\nRecent Activity (last 7 days):")
-                    for date, count in recent:
-                        print(f"  {date}: {count} messages")
-        
-        except Exception as e:
-            logging.error(f"Error getting database status: {e}")
-            print("Error retrieving database status.")
+            if choice == "1":
+                self.show_database_statistics()
+            elif choice == "2":
+                self.manage_unposted_messages()
+            elif choice == "3":
+                self.view_recent_activity()
+            elif choice == "4":
+                self.manage_processed_messages()
+            elif choice == "5":
+                self.view_media_messages()  # New option
+            elif choice == "6":
+                self.database_cleanup()
+            elif choice == "7":
+                break
+            else:
+                print("Invalid choice. Please enter 1-7.")
+            
+            if choice != "7":
+                input("\nPress Enter to continue...")
 
     def display_mapping_menu(self) -> None:
         """Display channel mapping management menu."""
@@ -1026,8 +990,9 @@ class MenuSystem:
         print("2. Manage Unposted Messages")
         print("3. View Recent Activity")
         print("4. Manage Processed Messages")
-        print("5. Database Cleanup")
-        print("6. Back to Main Menu")
+        print("5. View Media Messages")  # New option
+        print("6. Database Cleanup")
+        print("7. Back to Main Menu")
         print("="*50)
 
     def show_database_statistics(self) -> None:
@@ -1343,4 +1308,152 @@ class MenuSystem:
         except Exception as e:
             logging.error(f"Error in database cleanup: {e}")
             print("Error performing cleanup.")
+
+    def view_media_messages(self) -> None:
+        """View messages with media attachments."""
+        print("\n--- Messages with Media ---")
+        
+        try:
+            import sqlite3
+            import subprocess
+            import platform
+            
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get messages with media
+                cursor.execute("""
+                    SELECT id, mapping_id, message_id, original_message, processed_message, 
+                        media_type, media_path, date_received, posted
+                    FROM processed_messages 
+                    WHERE has_media = 1 
+                    ORDER BY date_received DESC 
+                    LIMIT 20
+                """)
+                
+                media_messages = cursor.fetchall()
+                
+                if not media_messages:
+                    print("No messages with media found.")
+                    return
+                
+                print(f"Found {len(media_messages)} messages with media:")
+                
+                for i, (db_id, mapping_id, msg_id, original, processed, media_type, media_path, date, posted) in enumerate(media_messages, 1):
+                    status = "Posted" if posted else "Pending"
+                    media_exists = "✓" if media_path and Path(media_path).exists() else "✗"
+                    
+                    print(f"\n{i}. ID: {db_id} | Msg: {msg_id} | {mapping_id}")
+                    print(f"   Date: {date} | Status: {status}")
+                    print(f"   Media: {media_type or 'Unknown'} | File: {media_exists}")
+                    print(f"   Text: {(original or '')[:60]}...")
+                    if media_path:
+                        print(f"   Path: {media_path}")
+                
+                # Media actions
+                print("\nMedia Actions:")
+                print("1. View specific media file")
+                print("2. Show media statistics")
+                print("3. Clean up missing media files")
+                print("4. Export media list")
+                
+                choice = input("Enter choice (1-4): ").strip()
+                
+                if choice == "1":
+                    db_id = input("Enter DB ID to view media: ").strip()
+                    cursor.execute("SELECT media_path, media_type FROM processed_messages WHERE id = ?", (db_id,))
+                    result = cursor.fetchone()
+                    
+                    if result and result[0]:
+                        media_path = Path(result[0])
+                        if media_path.exists():
+                            print(f"Opening: {media_path}")
+                            self._open_media_file(str(media_path))
+                        else:
+                            print("Media file not found on disk.")
+                    else:
+                        print("No media path found for this message.")
+                
+                elif choice == "2":
+                    # Media statistics
+                    cursor.execute("""
+                        SELECT media_type, COUNT(*) as count
+                        FROM processed_messages 
+                        WHERE has_media = 1 
+                        GROUP BY media_type
+                    """)
+                    stats = cursor.fetchall()
+                    
+                    print("\nMedia Statistics:")
+                    for media_type, count in stats:
+                        print(f"  {media_type or 'Unknown'}: {count} files")
+                    
+                    # File size info
+                    total_size = 0
+                    missing_files = 0
+                    cursor.execute("SELECT media_path FROM processed_messages WHERE has_media = 1")
+                    for (media_path,) in cursor.fetchall():
+                        if media_path and Path(media_path).exists():
+                            total_size += Path(media_path).stat().st_size
+                        else:
+                            missing_files += 1
+                    
+                    print(f"\nTotal size: {total_size / (1024*1024):.2f} MB")
+                    print(f"Missing files: {missing_files}")
+                
+                elif choice == "3":
+                    # Clean up missing files
+                    cursor.execute("SELECT id, media_path FROM processed_messages WHERE has_media = 1")
+                    missing_count = 0
+                    
+                    for db_id, media_path in cursor.fetchall():
+                        if media_path and not Path(media_path).exists():
+                            cursor.execute("UPDATE processed_messages SET media_path = NULL WHERE id = ?", (db_id,))
+                            missing_count += 1
+                    
+                    conn.commit()
+                    print(f"Cleaned up {missing_count} missing media references.")
+                
+                elif choice == "4":
+                    # Export media list
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    export_file = f"media_list_{timestamp}.txt"
+                    
+                    with open(export_file, 'w', encoding='utf-8') as f:
+                        f.write("Media Files Export\n")
+                        f.write("=" * 50 + "\n\n")
+                        
+                        for db_id, mapping_id, msg_id, original, processed, media_type, media_path, date, posted in media_messages:
+                            f.write(f"ID: {db_id} | Message: {msg_id} | Mapping: {mapping_id}\n")
+                            f.write(f"Date: {date} | Posted: {posted}\n")
+                            f.write(f"Media: {media_type} | Path: {media_path}\n")
+                            f.write(f"Text: {original}\n")
+                            f.write("-" * 50 + "\n")
+                    
+                    print(f"Media list exported to: {export_file}")
+        
+        except Exception as e:
+            logging.error(f"Error viewing media messages: {e}")
+            print("Error viewing media messages.")
+
+    def _open_media_file(self, file_path: str) -> None:
+        """Open media file with system default application."""
+        try:
+            import subprocess
+            import platform
+            
+            system = platform.system()
+            if system == "Windows":
+                subprocess.run(['start', '', file_path], shell=True, check=True)
+            elif system == "Darwin":  # macOS
+                subprocess.run(['open', file_path], check=True)
+            else:  # Linux
+                subprocess.run(['xdg-open', file_path], check=True)
+            
+            print("Media file opened successfully.")
+            
+        except subprocess.CalledProcessError:
+            print("Could not open media file with system default application.")
+        except Exception as e:
+            print(f"Error opening media file: {e}")
 
