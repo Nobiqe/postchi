@@ -17,4 +17,4 @@ python-dotenv>=1.0.0
 # - datetime (built-in)
 
 # System package needed (not installable via pip):
- python3-tk  
+# - python3-tk  (install with: sudo apt install python3-tk)
