@@ -6,3 +6,8 @@ session_*
 __pycache__
 media/
 *.txt
+logs/
+media/
+*.session
+*.jpg
+*.mp4
