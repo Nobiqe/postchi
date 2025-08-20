@@ -219,10 +219,25 @@ class MultiChannelProcessor:
             print(f"   Source: {mapping.source_channel_id} -> Target: {mapping.target_channel_id}")
             
             last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+            
+            # If this is the first run (no last_id), get the latest message ID to start monitoring from
+            if last_id is None:
+                # Get only the most recent message to establish a baseline
+                recent_messages = await self.telegram_client.get_channel_messages(
+                    mapping.source_channel_id, limit=1
+                )
+                if recent_messages:
+                    last_id = recent_messages[0]['id']
+                    print(f"   Initialized monitoring from message ID: {last_id}")
+                    return  # Skip processing on first run, just establish baseline
+                else:
+                    print(f"   No messages found in channel")
+                    return
+            
             print(f"   Last processed message ID: {last_id}")
             
             new_messages = await self.telegram_client.get_channel_messages(
-                mapping.source_channel_id, last_message_id=last_id
+                mapping.source_channel_id, last_message_id=last_id, limit=20
             )
             
             print(f"   Found {len(new_messages)} new messages")
@@ -268,7 +283,7 @@ class MultiChannelProcessor:
                     else:
                         print(f"    ❌ No unposted messages found after processing")
                 else:
-                    print(f"    ⏭️  Skipping message (doesn't match criteria)")
+                    print(f"    ⭐ Skipping message (doesn't match criteria)")
                     
         except Exception as e:
             print(f"❌ Error in immediate processing for mapping {mapping.id}: {e}")

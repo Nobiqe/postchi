@@ -57,8 +57,13 @@ class TelegramChannelClient:
             
             if since_date:
                 kwargs['offset_date'] = since_date
-            if last_message_id:
+            elif last_message_id:
                 kwargs['min_id'] = last_message_id
+            else:
+                # For real-time monitoring when no last_message_id is set,
+                # only get the most recent messages (limit to prevent fetching all history)
+                kwargs['limit'] = limit or 10  # Default to last 10 messages
+            
             if limit:
                 kwargs['limit'] = limit
             

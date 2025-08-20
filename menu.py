@@ -485,11 +485,11 @@ class MenuSystem:
                         await self.processor._process_and_post_immediately(mapping)
                     
                     # Wait before next check
-                    await asyncio.sleep(7200)  # Check every 5 seconds
+                    await asyncio.sleep(5)  # Check every 5 seconds
                     
                 except Exception as e:
                     logging.error(f"Error in monitoring loop: {e}")
-                    await asyncio.sleep(7200)
+                    await asyncio.sleep(5)
                     
         except KeyboardInterrupt:
             print("\n⏹️  Monitoring stopped by user.")
