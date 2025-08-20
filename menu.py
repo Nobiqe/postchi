@@ -573,7 +573,7 @@ class MenuSystem:
         """View database status and manage data."""
         while True:
             self.display_database_menu()
-            choice = input("Enter your choice (1-7): ").strip()
+            choice = input("Enter your choice (1-7): ").strip()  # Changed from 1-6 to 1-7
             
             if choice == "1":
                 self.show_database_statistics()
@@ -584,15 +584,15 @@ class MenuSystem:
             elif choice == "4":
                 self.manage_processed_messages()
             elif choice == "5":
-                self.view_media_messages()  # New option
+                self.view_media_messages()  # This option exists
             elif choice == "6":
                 self.database_cleanup()
-            elif choice == "7":
+            elif choice == "7":  # Added this condition
                 break
             else:
-                print("Invalid choice. Please enter 1-7.")
+                print("Invalid choice. Please enter 1-7.")  # Updated error message
             
-            if choice != "7":
+            if choice != "7":  # Changed from "6" to "7"
                 input("\nPress Enter to continue...")
 
     def display_mapping_menu(self) -> None:
@@ -957,30 +957,6 @@ class MenuSystem:
         
         return ""
     
-    def view_database_status(self) -> None:
-        """View database status and manage data."""
-        while True:
-            self.display_database_menu()
-            choice = input("Enter your choice (1-6): ").strip()
-            
-            if choice == "1":
-                self.show_database_statistics()
-            elif choice == "2":
-                self.manage_unposted_messages()
-            elif choice == "3":
-                self.view_recent_activity()
-            elif choice == "4":
-                self.manage_processed_messages()
-            elif choice == "5":
-                self.database_cleanup()
-            elif choice == "6":
-                break
-            else:
-                print("Invalid choice. Please enter 1-6.")
-            
-            if choice != "6":
-                input("\nPress Enter to continue...")
-
     def display_database_menu(self) -> None:
         """Display database management menu."""
         print("\n" + "="*50)
@@ -1317,6 +1293,7 @@ class MenuSystem:
             import sqlite3
             import subprocess
             import platform
+            from pathlib import Path  # Add this import
             
             with sqlite3.connect(self.db_manager.db_path) as conn:
                 cursor = conn.cursor()
