@@ -437,7 +437,6 @@ class MenuSystem:
             logging.error(f"Error during processing (Mode {current_mode}): {e}")
             print(f"Error during processing: {e}")
 
-
     async def _start_monitoring_with_exit(self) -> None:
         """Start monitoring with option to exit gracefully."""
         import threading
@@ -663,7 +662,6 @@ class MenuSystem:
         except Exception as e:
             print(f"✗ Connection test failed: {e}")
     
-
     def view_all_mappings(self) -> None:
         """Display all channel mappings."""
         mappings = self.config_manager.channel_mappings
@@ -835,8 +833,6 @@ class MenuSystem:
         else:
             print("Error updating mapping status!")
 
-
-
     def show_saved_footers_menu(self):
         """Show saved footers menu and return selected footer content."""
         while True:
@@ -990,3 +986,354 @@ class MenuSystem:
         
         return ""
     
+    def view_database_status(self) -> None:
+        """View database status and manage data."""
+        while True:
+            self.display_database_menu()
+            choice = input("Enter your choice (1-6): ").strip()
+            
+            if choice == "1":
+                self.show_database_statistics()
+            elif choice == "2":
+                self.manage_unposted_messages()
+            elif choice == "3":
+                self.view_recent_activity()
+            elif choice == "4":
+                self.manage_processed_messages()
+            elif choice == "5":
+                self.database_cleanup()
+            elif choice == "6":
+                break
+            else:
+                print("Invalid choice. Please enter 1-6.")
+            
+            if choice != "6":
+                input("\nPress Enter to continue...")
+
+    def display_database_menu(self) -> None:
+        """Display database management menu."""
+        print("\n" + "="*50)
+        print("DATABASE MANAGEMENT")
+        print("="*50)
+        print("1. View Statistics")
+        print("2. Manage Unposted Messages")
+        print("3. View Recent Activity")
+        print("4. Manage Processed Messages")
+        print("5. Database Cleanup")
+        print("6. Back to Main Menu")
+        print("="*50)
+
+    def show_database_statistics(self) -> None:
+        """Show database statistics."""
+        print("\n--- Database Statistics ---")
+        
+        try:
+            channels = self.db_manager.get_all_channels()
+            print(f"Stored Channels: {len(channels)}")
+            
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_messages")
+                total_messages = cursor.fetchone()[0]
+                print(f"Total Processed Messages: {total_messages}")
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 0")
+                unposted_messages = cursor.fetchone()[0]
+                print(f"Unposted Messages: {unposted_messages}")
+                
+                cursor.execute("SELECT COUNT(*) FROM processed_messages WHERE posted = 1")
+                posted_messages = cursor.fetchone()[0]
+                print(f"Posted Messages: {posted_messages}")
+                
+                cursor.execute("""
+                    SELECT mapping_id, COUNT(*) as count, 
+                        SUM(CASE WHEN posted = 1 THEN 1 ELSE 0 END) as posted_count
+                    FROM processed_messages 
+                    GROUP BY mapping_id
+                """)
+                
+                results = cursor.fetchall()
+                if results:
+                    print("\nMessages by Mapping:")
+                    for mapping_id, total, posted in results:
+                        unposted = total - posted
+                        print(f"  {mapping_id}: {total} total, {posted} posted, {unposted} pending")
+        
+        except Exception as e:
+            logging.error(f"Error getting database statistics: {e}")
+            print("Error retrieving database statistics.")
+
+    def manage_unposted_messages(self) -> None:
+        """Manage unposted messages."""
+        print("\n--- Unposted Messages Management ---")
+        
+        try:
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT id, mapping_id, message_id, original_message, processed_message, date_received
+                    FROM processed_messages WHERE posted = 0
+                    ORDER BY date_received DESC
+                """)
+                
+                unposted = cursor.fetchall()
+                
+                if not unposted:
+                    print("No unposted messages found.")
+                    return
+                
+                print(f"Found {len(unposted)} unposted messages:")
+                
+                for i, (db_id, mapping_id, msg_id, original, processed, date) in enumerate(unposted[:10], 1):
+                    print(f"\n{i}. Mapping: {mapping_id} | Message ID: {msg_id}")
+                    print(f"   Date: {date}")
+                    print(f"   Original: {original[:50]}...")
+                    print(f"   Processed: {processed[:50]}...")
+                
+                if len(unposted) > 10:
+                    print(f"\n... and {len(unposted) - 10} more messages")
+                
+                print("\nOptions:")
+                print("1. Mark specific message as posted")
+                print("2. Delete specific message")
+                print("3. Mark all as posted for a mapping")
+                print("4. Clear all unposted messages")
+                
+                sub_choice = input("Enter choice (1-4): ").strip()
+                
+                if sub_choice == "1":
+                    msg_id = input("Enter message ID to mark as posted: ").strip()
+                    mapping_id = input("Enter mapping ID: ").strip()
+                    if self.db_manager.mark_as_posted(int(msg_id), mapping_id):
+                        print("Message marked as posted.")
+                    else:
+                        print("Error marking message as posted.")
+                
+                elif sub_choice == "2":
+                    db_id = input("Enter database ID to delete: ").strip()
+                    cursor.execute("DELETE FROM processed_messages WHERE id = ?", (db_id,))
+                    conn.commit()
+                    print("Message deleted.")
+                
+                elif sub_choice == "3":
+                    mapping_id = input("Enter mapping ID: ").strip()
+                    cursor.execute("UPDATE processed_messages SET posted = 1, date_posted = ? WHERE mapping_id = ? AND posted = 0", 
+                                (datetime.now(), mapping_id))
+                    conn.commit()
+                    print(f"All messages for mapping '{mapping_id}' marked as posted.")
+                
+                elif sub_choice == "4":
+                    confirm = input("Delete all unposted messages? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        cursor.execute("DELETE FROM processed_messages WHERE posted = 0")
+                        conn.commit()
+                        print("All unposted messages cleared.")
+        
+        except Exception as e:
+            logging.error(f"Error managing unposted messages: {e}")
+            print("Error managing unposted messages.")
+
+    def view_recent_activity(self) -> None:
+        """View recent database activity."""
+        print("\n--- Recent Activity ---")
+        
+        try:
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT DATE(created_at) as date, COUNT(*) as count
+                    FROM processed_messages 
+                    WHERE created_at >= date('now', '-30 days')
+                    GROUP BY DATE(created_at)
+                    ORDER BY date DESC
+                """)
+                
+                recent = cursor.fetchall()
+                if recent:
+                    print("Activity (last 30 days):")
+                    for date, count in recent:
+                        print(f"  {date}: {count} messages")
+                else:
+                    print("No recent activity found.")
+                
+                # Show latest messages
+                cursor.execute("""
+                    SELECT mapping_id, message_id, date_received, posted
+                    FROM processed_messages 
+                    ORDER BY date_received DESC 
+                    LIMIT 10
+                """)
+                
+                latest = cursor.fetchall()
+                if latest:
+                    print("\nLatest 10 messages:")
+                    for mapping_id, msg_id, date, posted in latest:
+                        status = "Posted" if posted else "Pending"
+                        print(f"  {mapping_id} | ID: {msg_id} | {date} | {status}")
+        
+        except Exception as e:
+            logging.error(f"Error viewing recent activity: {e}")
+            print("Error viewing recent activity.")
+
+    def manage_processed_messages(self) -> None:
+        """Manage all processed messages."""
+        print("\n--- Processed Messages Management ---")
+        
+        try:
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                print("Search options:")
+                print("1. By mapping ID")
+                print("2. By date range")
+                print("3. By message content")
+                print("4. Show all recent")
+                
+                search_choice = input("Enter choice (1-4): ").strip()
+                
+                if search_choice == "1":
+                    mapping_id = input("Enter mapping ID: ").strip()
+                    cursor.execute("""
+                        SELECT id, message_id, original_message, processed_message, date_received, posted
+                        FROM processed_messages WHERE mapping_id = ?
+                        ORDER BY date_received DESC LIMIT 20
+                    """, (mapping_id,))
+                
+                elif search_choice == "2":
+                    days = input("Enter number of days back: ").strip()
+                    cursor.execute("""
+                        SELECT id, message_id, original_message, processed_message, date_received, posted
+                        FROM processed_messages 
+                        WHERE date_received >= date('now', '-{} days')
+                        ORDER BY date_received DESC LIMIT 20
+                    """.format(days))
+                
+                elif search_choice == "3":
+                    keyword = input("Enter keyword to search in messages: ").strip()
+                    cursor.execute("""
+                        SELECT id, message_id, original_message, processed_message, date_received, posted
+                        FROM processed_messages 
+                        WHERE original_message LIKE ? OR processed_message LIKE ?
+                        ORDER BY date_received DESC LIMIT 20
+                    """, (f'%{keyword}%', f'%{keyword}%'))
+                
+                else:  # Show all recent
+                    cursor.execute("""
+                        SELECT id, message_id, original_message, processed_message, date_received, posted
+                        FROM processed_messages 
+                        ORDER BY date_received DESC LIMIT 20
+                    """)
+                
+                results = cursor.fetchall()
+                
+                if results:
+                    for db_id, msg_id, original, processed, date, posted in results:
+                        status = "Posted" if posted else "Pending"
+                        print(f"\nDB ID: {db_id} | Msg ID: {msg_id} | {date} | {status}")
+                        print(f"Original: {original[:100]}...")
+                        print(f"Processed: {processed[:100]}...")
+                    
+                    print("\nActions:")
+                    print("1. Delete message by DB ID")
+                    print("2. Edit processed message")
+                    print("3. Toggle posted status")
+                    
+                    action = input("Enter action (1-3): ").strip()
+                    
+                    if action == "1":
+                        db_id = input("Enter DB ID to delete: ").strip()
+                        cursor.execute("DELETE FROM processed_messages WHERE id = ?", (db_id,))
+                        conn.commit()
+                        print("Message deleted.")
+                    
+                    elif action == "2":
+                        db_id = input("Enter DB ID to edit: ").strip()
+                        new_text = input("Enter new processed text: ").strip()
+                        cursor.execute("UPDATE processed_messages SET processed_message = ? WHERE id = ?", (new_text, db_id))
+                        conn.commit()
+                        print("Message updated.")
+                    
+                    elif action == "3":
+                        db_id = input("Enter DB ID to toggle status: ").strip()
+                        cursor.execute("UPDATE processed_messages SET posted = NOT posted WHERE id = ?", (db_id,))
+                        conn.commit()
+                        print("Status toggled.")
+                
+                else:
+                    print("No messages found.")
+        
+        except Exception as e:
+            logging.error(f"Error managing processed messages: {e}")
+            print("Error managing processed messages.")
+
+    def database_cleanup(self) -> None:
+        """Database cleanup options."""
+        print("\n--- Database Cleanup ---")
+        
+        try:
+            import sqlite3
+            with sqlite3.connect(self.db_manager.db_path) as conn:
+                cursor = conn.cursor()
+                
+                print("Cleanup options:")
+                print("1. Delete old posted messages (older than X days)")
+                print("2. Delete messages from specific mapping")
+                print("3. Clear posting schedule")
+                print("4. Vacuum database")
+                print("5. Reset all message statuses to unposted")
+                
+                cleanup_choice = input("Enter choice (1-5): ").strip()
+                
+                if cleanup_choice == "1":
+                    days = input("Delete posted messages older than how many days? ").strip()
+                    confirm = input(f"Delete all posted messages older than {days} days? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        cursor.execute("""
+                            DELETE FROM processed_messages 
+                            WHERE posted = 1 AND date_posted < date('now', '-{} days')
+                        """.format(days))
+                        deleted = cursor.rowcount
+                        conn.commit()
+                        print(f"Deleted {deleted} old messages.")
+                
+                elif cleanup_choice == "2":
+                    mapping_id = input("Enter mapping ID to delete all messages: ").strip()
+                    confirm = input(f"Delete ALL messages for mapping '{mapping_id}'? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        cursor.execute("DELETE FROM processed_messages WHERE mapping_id = ?", (mapping_id,))
+                        deleted = cursor.rowcount
+                        conn.commit()
+                        print(f"Deleted {deleted} messages.")
+                
+                elif cleanup_choice == "3":
+                    confirm = input("Clear all posting schedules? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        cursor.execute("DELETE FROM posting_schedule")
+                        conn.commit()
+                        print("Posting schedules cleared.")
+                
+                elif cleanup_choice == "4":
+                    print("Optimizing database...")
+                    cursor.execute("VACUUM")
+                    conn.commit()
+                    print("Database optimized.")
+                
+                elif cleanup_choice == "5":
+                    confirm = input("Reset ALL messages to unposted status? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        cursor.execute("UPDATE processed_messages SET posted = 0, date_posted = NULL")
+                        updated = cursor.rowcount
+                        conn.commit()
+                        print(f"Reset {updated} messages to unposted.")
+        
+        except Exception as e:
+            logging.error(f"Error in database cleanup: {e}")
+            print("Error performing cleanup.")
+
