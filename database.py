@@ -1,6 +1,8 @@
+# Add to database.py
+
 import sqlite3
 from datetime import datetime, timedelta
-from typing import List, Optional,Dict
+from typing import List, Optional, Dict
 from dataclasses import dataclass
 from pathlib import Path
 import logging
@@ -8,7 +10,7 @@ import logging
 
 @dataclass
 class ProcessedMessage:
-    """Data class for processed messages."""
+    """Data class for processed messages with media support."""
     original_message: str
     processed_message: str
     message_id: int
@@ -17,21 +19,27 @@ class ProcessedMessage:
     target_channel_id: int
     mapping_id: str
     posted: bool = False
+    has_media: bool = False
+    media_type: Optional[str] = None
+    media_path: Optional[str] = None
+    media_file_id: Optional[str] = None
 
 
 class DatabaseManager:
-    """Enhanced database manager with support for multiple channel mappings."""
+    """Enhanced database manager with media support."""
     
     def __init__(self, db_path: str = "telegram_messages.db"):
         self.db_path = Path(db_path)
+        self.media_dir = Path("media")
+        self.media_dir.mkdir(exist_ok=True)
         self.init_database()
     
     def init_database(self) -> None:
-        """Initialize the database with required tables."""
+        """Initialize the database with required tables including media support."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # Enhanced processed_messages table
+            # Enhanced processed_messages table with media fields
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,12 +53,29 @@ class DatabaseManager:
                     date_processed TIMESTAMP,
                     posted BOOLEAN DEFAULT 0,
                     date_posted TIMESTAMP,
+                    has_media BOOLEAN DEFAULT 0,
+                    media_type TEXT,
+                    media_path TEXT,
+                    media_file_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(message_id, source_channel_id, target_channel_id)
                 )
             """)
             
-            # Enhanced posting schedule table
+            # Check if media columns exist, add them if not (for existing databases)
+            cursor.execute("PRAGMA table_info(processed_messages)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'has_media' not in columns:
+                cursor.execute("ALTER TABLE processed_messages ADD COLUMN has_media BOOLEAN DEFAULT 0")
+            if 'media_type' not in columns:
+                cursor.execute("ALTER TABLE processed_messages ADD COLUMN media_type TEXT")
+            if 'media_path' not in columns:
+                cursor.execute("ALTER TABLE processed_messages ADD COLUMN media_path TEXT")
+            if 'media_file_id' not in columns:
+                cursor.execute("ALTER TABLE processed_messages ADD COLUMN media_file_id TEXT")
+            
+            # Other existing tables remain the same
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS posting_schedule (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +87,6 @@ class DatabaseManager:
                 )
             """)
             
-            # Channel information table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS channels (
                     id INTEGER PRIMARY KEY,
@@ -74,17 +98,18 @@ class DatabaseManager:
             """)
             
             conn.commit()
-    
+ 
     def save_processed_message(self, message: ProcessedMessage) -> bool:
-        """Save a processed message to the database."""
+        """Save a processed message with media support to the database."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR REPLACE INTO processed_messages 
                     (message_id, source_channel_id, target_channel_id, mapping_id,
-                     original_message, processed_message, date_received, date_processed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     original_message, processed_message, date_received, date_processed,
+                     has_media, media_type, media_path, media_file_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     message.message_id,
                     message.source_channel_id,
@@ -93,7 +118,11 @@ class DatabaseManager:
                     message.original_message,
                     message.processed_message,
                     message.date,
-                    datetime.now()
+                    datetime.now(),
+                    message.has_media,
+                    message.media_type,
+                    message.media_path,
+                    message.media_file_id
                 ))
                 conn.commit()
                 return True
@@ -102,13 +131,14 @@ class DatabaseManager:
             return False
     
     def get_unposted_messages(self, mapping_id: str, limit: int = 1) -> List[ProcessedMessage]:
-        """Get unposted messages for a specific mapping."""
+        """Get unposted messages for a specific mapping with media info."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT message_id, source_channel_id, target_channel_id, mapping_id,
-                           original_message, processed_message, date_received, posted
+                           original_message, processed_message, date_received, posted,
+                           has_media, media_type, media_path, media_file_id
                     FROM processed_messages 
                     WHERE posted = 0 AND mapping_id = ?
                     ORDER BY date_received ASC 
@@ -125,7 +155,11 @@ class DatabaseManager:
                         original_message=row[4],
                         processed_message=row[5],
                         date=datetime.fromisoformat(row[6]) if row[6] else datetime.now(),
-                        posted=bool(row[7])
+                        posted=bool(row[7]),
+                        has_media=bool(row[8]) if row[8] is not None else False,
+                        media_type=row[9],
+                        media_path=row[10],
+                        media_file_id=row[11]
                     ))
                 return messages
         except Exception as e:

@@ -279,7 +279,7 @@ class MenuSystem:
             return False
     
     async def start_processing(self) -> None:
-        """Start the message processing with 18 different modes."""
+        """Start the message processing with media support options."""
         print("\n--- Starting Message Processing ---")
         
         if not self.processor:
@@ -306,18 +306,20 @@ class MenuSystem:
         
         processing_choice = input("Enter choice (1-3): ").strip()
         
+        # Media handling configuration
+        print("\n--- Media Configuration ---")
+        include_media = input("Do you want to download and forward media files? (y/n): ").strip().lower() == 'y'
+        
         # AI Agent Configuration
         print("\n--- AI Agent Configuration ---")
         use_ai_agent = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower() == 'y'
 
         ai_system_prompt = None
         if use_ai_agent:
-            # Check AI configuration
             if not self.config_manager.ai_config.api_key:
                 print("Error: AI API key not configured! Please configure AI settings first.")
                 return
             
-            # Test AI connection
             try:
                 from ai_processor import UniversalMessageProcessor
                 ai_config = self.config_manager.ai_config
@@ -339,7 +341,7 @@ class MenuSystem:
             if not ai_system_prompt:
                 ai_system_prompt = "Please rewrite this text to be more professional and suitable for a trading channel."
 
-        # Footer Configuration (MOVED OUTSIDE the AI if block)
+        # Footer Configuration
         custom_footer = None
         while True:
             print("\n--- Footer Configuration ---")
@@ -350,35 +352,37 @@ class MenuSystem:
             
             footer_choice = input("Enter choice (1-3): ").strip()
             
-            if footer_choice == "1":  # Saved footers
+            if footer_choice == "1":
                 selected_footer = self.show_saved_footers_menu()
                 if selected_footer is not None:
                     custom_footer = selected_footer
                     break
-            elif footer_choice == "2":  # Custom footer
+            elif footer_choice == "2":
                 custom_footer = self.create_custom_footer()
                 break
-            elif footer_choice == "3":  # No footer
+            elif footer_choice == "3":
                 custom_footer = ""
                 break
             else:
                 print("Invalid choice. Please enter 1-3.")
 
-        # Determine mode number (1-18)
+        # Mode calculation with media support (now 36 modes total)
         mode_base = 0
         if processing_choice == "1":  # Historical
             mode_base = 0
         elif processing_choice == "2":  # Real-time
-            mode_base = 6
-        elif processing_choice == "3":  # Both
             mode_base = 12
+        elif processing_choice == "3":  # Both
+            mode_base = 24
 
+        media_offset = 0 if include_media else 6
         ai_offset = 0 if use_ai_agent else 3
         footer_offset = int(footer_choice) - 1
-        current_mode = mode_base + ai_offset + footer_offset + 1
+        current_mode = mode_base + media_offset + ai_offset + footer_offset + 1
 
-        print(f"\n🎯 Running Mode {current_mode}/18:")
+        print(f"\nMode {current_mode}/36:")
         print(f"   Processing: {['Historical', 'Real-time', 'Both'][int(processing_choice)-1]}")
+        print(f"   Media: {'Enabled' if include_media else 'Disabled'}")
         print(f"   AI Agent: {'Enabled' if use_ai_agent else 'Disabled'}")
         print(f"   Footer: {['Saved', 'Custom', 'None'][int(footer_choice)-1]}")
         
@@ -387,16 +391,16 @@ class MenuSystem:
             'use_ai_agent': use_ai_agent,
             'ai_system_prompt': ai_system_prompt,
             'custom_footer': custom_footer,
+            'include_media': include_media,
             'mode': current_mode
         }
         
         try:
             if processing_choice in ['1', '3']:  # Historical processing
-                print(f"\n📚 Processing historical messages (Mode {current_mode})...")
+                print(f"\nProcessing historical messages (Mode {current_mode})...")
                 for mapping in active_mappings:
                     print(f"Processing {mapping.id}...")
                     
-                    # Count messages before processing
                     since_date = datetime.now() - timedelta(days=7)
                     messages = await self.processor.telegram_client.get_channel_messages(
                         mapping.source_channel_id, since_date=since_date
@@ -409,13 +413,12 @@ class MenuSystem:
                     
                     print(f"  Found {len(messages)} total messages, {matching_count} matching criteria")
                     
-                    # Process with session config
                     await self._process_mapping_with_config(mapping, session_config, historical=True)
                 
-                print("✅ Historical processing completed!")
+                print("Historical processing completed!")
             
             if processing_choice in ['2', '3']:  # Real-time monitoring
-                print(f"\n🔄 Starting real-time monitoring (Mode {current_mode})...")
+                print(f"\nStarting real-time monitoring (Mode {current_mode})...")
                 print("Messages will be forwarded immediately when detected.")
                 print("\n" + "="*60)
                 print("MONITORING ACTIVE - Choose an option:")
@@ -423,10 +426,7 @@ class MenuSystem:
                 print("  Press Ctrl+C: Force stop")
                 print("="*60)
                 
-                # Store session config for real-time monitoring
                 self.processor.session_config = session_config
-                
-                # Start monitoring with exit option
                 await self._start_monitoring_with_exit()
             
         except KeyboardInterrupt:
@@ -520,45 +520,52 @@ class MenuSystem:
             logging.error(f"Error processing mapping {mapping.id} with config: {e}")
 
     async def _process_single_message_with_config(self, msg_data, mapping, session_config):
-        """Process a single message with session configuration."""
+        """Process a single message with session configuration including media."""
         try:
-            # Check if already processed
             last_id = self.processor.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
             if last_id and msg_data['id'] <= last_id:
                 return
             
-            # Determine prompt to use
-            prompt_to_use = None
+            # Handle media download if enabled
+            media_path = None
+            if session_config['include_media'] and msg_data.get('has_media'):
+                media_path = await self.processor.telegram_client.download_media(
+                    msg_data['id'], mapping.source_channel_id, msg_data.get('media_file_id')
+                )
+            
+            # Process text with AI if enabled
+            processed_text = msg_data['text']
             if session_config['use_ai_agent'] and session_config['ai_system_prompt']:
                 prompt_to_use = f"{session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
-            elif mapping.prompt_template:
-                prompt_to_use = mapping.prompt_template
+                processed_text = await self.processor.ai_processor.process_message(
+                    msg_data['text'], 
+                    prompt_to_use,
+                    session_config['custom_footer']
+                ) or msg_data['text']
+            elif session_config['custom_footer']:
+                processed_text += session_config['custom_footer']
             
-            # Process with AI
-            processed_text = await self.processor.ai_processor.process_message(
-                msg_data['text'], 
-                prompt_to_use,
-                session_config['custom_footer']
+            # Create ProcessedMessage with media info
+            from database import ProcessedMessage
+            message = ProcessedMessage(
+                message_id=msg_data['id'],
+                source_channel_id=mapping.source_channel_id,
+                target_channel_id=mapping.target_channel_id,
+                mapping_id=mapping.id,
+                original_message=msg_data['text'],
+                processed_message=processed_text,
+                date=msg_data['date'],
+                has_media=msg_data.get('has_media', False),
+                media_type=msg_data.get('media_type'),
+                media_path=media_path,
+                media_file_id=msg_data.get('media_file_id')
             )
             
-            if processed_text:
-                # Save to database
-                from database import ProcessedMessage
-                message = ProcessedMessage(
-                    message_id=msg_data['id'],
-                    source_channel_id=mapping.source_channel_id,
-                    target_channel_id=mapping.target_channel_id,
-                    mapping_id=mapping.id,
-                    original_message=msg_data['text'],
-                    processed_message=processed_text,
-                    date=msg_data['date']
-                )
-                
-                if self.processor.db_manager.save_processed_message(message):
-                    logging.info(f"Processed and saved message {msg_data['id']} for mapping {mapping.id}")
-                else:
-                    logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
-            
+            if self.processor.db_manager.save_processed_message(message):
+                logging.info(f"Processed and saved message {msg_data['id']} for mapping {mapping.id}")
+            else:
+                logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
+        
         except Exception as e:
             logging.error(f"Error processing message {msg_data['id']} for mapping {mapping.id}: {e}")
 
