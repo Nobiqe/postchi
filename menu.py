@@ -948,7 +948,7 @@ class MenuSystem:
             
             # Remove instruction lines (lines starting with #)
             lines = content.split('\n')
-            footer_lines = [line for line in lines if not line.strip().startswith('#')]
+            footer_lines = [line for line in lines if not line.strip().startswith('##')]
             custom_footer = '\n'.join(footer_lines).strip()
             
             if custom_footer:
