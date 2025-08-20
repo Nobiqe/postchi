@@ -15,3 +15,6 @@ python-dotenv>=1.0.0
 # - json (built-in)
 # - logging (built-in)
 # - datetime (built-in)
+
+# System package needed (not installable via pip):
+ python3-tk  
