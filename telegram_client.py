@@ -1,8 +1,7 @@
-# Add to telegram_client.py
-
 import asyncio
 import logging
 import os
+import time
 from typing import List, Dict, Any, Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, ChannelPrivateError
@@ -12,31 +11,71 @@ from pathlib import Path
 
 
 class TelegramChannelClient:
-    """Enhanced Telegram client with media support."""
+    """Enhanced Telegram client with media support and database lock prevention."""
     
     def __init__(self, api_id: str, api_hash: str, phone_number: str):
-        self.client = TelegramClient(f'session_{phone_number}', api_id, api_hash)
+        # Create unique session name to avoid conflicts
+        session_name = f'session_{phone_number}_{int(time.time())}'
+        self.client = TelegramClient(session_name, api_id, api_hash)
         self.phone_number = phone_number
+        self.session_name = session_name
         self.media_dir = Path("media")
         self.media_dir.mkdir(exist_ok=True)
     
     async def initialize(self) -> bool:
-        """Initialize and authenticate the client."""
+        """Initialize and authenticate the client with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Clean up any existing session files first
+                self._cleanup_session_files()
+                
+                await self.client.start(phone=self.phone_number)
+                logging.info("Telegram client initialized successfully")
+                return True
+            except Exception as e:
+                logging.error(f"Error initializing Telegram client (attempt {attempt + 1}): {e}")
+                
+                if "database is locked" in str(e).lower():
+                    # Wait and try again with a new session name
+                    await asyncio.sleep(2)
+                    await self.disconnect()
+                    self.session_name = f'session_{self.phone_number}_{int(time.time())}_{attempt}'
+                    self.client = TelegramClient(self.session_name, self.client.api_id, self.client.api_hash)
+                    continue
+                
+                if attempt == max_retries - 1:
+                    print(f"Connection failed after {max_retries} attempts: {e}")
+                    print("Please check:")
+                    print("1. Internet connection")
+                    print("2. Telegram API credentials")
+                    print("3. Phone number format (+1234567890)")
+                    print("4. Close any other instances of this program")
+                    return False
+                
+                await asyncio.sleep(1)
+        
+        return False
+    
+    def _cleanup_session_files(self):
+        """Clean up old session files to prevent conflicts."""
         try:
-            await self.client.start(phone=self.phone_number)
-            logging.info("Telegram client initialized successfully")
-            return True
+            current_dir = Path('.')
+            session_files = list(current_dir.glob('session_*.session*'))
+            
+            for session_file in session_files:
+                try:
+                    # Only remove files older than 1 hour
+                    if time.time() - session_file.stat().st_mtime > 3600:
+                        session_file.unlink()
+                        logging.info(f"Cleaned up old session file: {session_file}")
+                except Exception as e:
+                    logging.warning(f"Could not remove session file {session_file}: {e}")
         except Exception as e:
-            logging.error(f"Error initializing Telegram client: {e}")
-            print(f"Connection failed: {e}")
-            print("Please check:")
-            print("1. Internet connection")
-            print("2. Telegram API credentials")
-            print("3. Phone number format (+1234567890)")
-            return False
+            logging.warning(f"Error during session cleanup: {e}")
     
     async def get_all_chats(self) -> List[Dict[str, Any]]:
-        """Get all available chats/channels."""
+        """Get all available chats/channels with error handling."""
         try:
             dialogs = await self.client.get_dialogs()
             chats = []
@@ -56,22 +95,26 @@ class TelegramChannelClient:
             return []
     
     async def get_channel_messages(self, channel_id: int, since_date: Optional[datetime] = None, 
-                                 last_message_id: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get messages from a specific channel with media support."""
+                                last_message_id: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get messages from a specific channel with media support and improved error handling."""
         try:
             messages = []
-            kwargs = {'reverse': True}
+            kwargs = {}
             
             if since_date:
                 kwargs['offset_date'] = since_date
             elif last_message_id:
                 kwargs['min_id'] = last_message_id
+            elif limit:
+                kwargs['limit'] = limit
             else:
-                kwargs['limit'] = limit or 10
+                kwargs['limit'] = 10
             
-            if limit:
+            # Only set limit if specified
+            if limit and 'limit' not in kwargs:
                 kwargs['limit'] = limit
             
+            # Add timeout to prevent hanging
             async for message in self.client.iter_messages(channel_id, **kwargs):
                 if message:
                     # Extract media information
@@ -85,6 +128,10 @@ class TelegramChannelClient:
                         'media_type': media_info['media_type'],
                         'media_file_id': media_info['media_file_id']
                     })
+            
+            # Sort by message ID descending (newest first) when using min_id
+            if last_message_id:
+                messages.sort(key=lambda x: x['id'], reverse=True)
             
             return messages
             
@@ -127,27 +174,32 @@ class TelegramChannelClient:
         return media_info
     
     async def download_media(self, message_id: int, channel_id: int, media_file_id: str) -> Optional[str]:
-        """Download media from a message and return the file path."""
-        try:
-            message = await self.client.get_messages(channel_id, ids=[message_id])
-            if not message or not message[0].media:
-                return None
-            
-            # Create filename
-            file_extension = self._get_file_extension(message[0].media)
-            filename = f"{media_file_id}{file_extension}"
-            file_path = self.media_dir / filename
-            
-            # Download if not exists
-            if not file_path.exists():
-                await self.client.download_media(message[0].media, file_path)
-                logging.info(f"Downloaded media: {file_path}")
-            
-            return str(file_path)
-            
-        except Exception as e:
-            logging.error(f"Error downloading media {media_file_id}: {e}")
-            return None
+        """Download media from a message and return the file path with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                message = await self.client.get_messages(channel_id, ids=[message_id])
+                if not message or not message[0].media:
+                    return None
+                
+                # Create filename
+                file_extension = self._get_file_extension(message[0].media)
+                filename = f"{media_file_id}{file_extension}"
+                file_path = self.media_dir / filename
+                
+                # Download if not exists
+                if not file_path.exists():
+                    await self.client.download_media(message[0].media, file_path)
+                    logging.info(f"Downloaded media: {file_path}")
+                
+                return str(file_path)
+                
+            except Exception as e:
+                logging.error(f"Error downloading media {media_file_id} (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1)
+                else:
+                    return None
     
     def _get_file_extension(self, media) -> str:
         """Get appropriate file extension for media."""
@@ -176,27 +228,71 @@ class TelegramChannelClient:
         return '.bin'
     
     async def send_message(self, channel_id: int, message_text: str, media_path: Optional[str] = None) -> bool:
-        """Send a message to a channel with optional media."""
-        try:
-            if media_path and Path(media_path).exists():
-                await self.client.send_file(channel_id, media_path, caption=message_text)
-            else:
-                await self.client.send_message(channel_id, message_text)
-            return True
-            
-        except FloodWaitError as e:
-            logging.warning(f"Flood wait error: {e.seconds} seconds")
-            await asyncio.sleep(e.seconds)
-            return False
-            
-        except Exception as e:
-            logging.error(f"Error sending message to channel {channel_id}: {e}")
-            return False
+        """Send a message to a channel with optional media and caption length handling."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if media_path and Path(media_path).exists():
+                    # Telegram caption limit is 1024 characters
+                    if len(message_text) > 1024:
+                        # Send media with truncated caption, then send remaining text
+                        caption = message_text[:1020] + "..."  # Leave space for "..."
+                        remaining_text = message_text[1020:]
+                        
+                        # Send media with truncated caption
+                        await self.client.send_file(channel_id, media_path, caption=caption)
+                        
+                        # Send remaining text as separate message if significant
+                        if len(remaining_text.strip()) > 10:
+                            await asyncio.sleep(1)  # Small delay between messages
+                            await self.client.send_message(channel_id, remaining_text)
+                    else:
+                        await self.client.send_file(channel_id, media_path, caption=message_text)
+                else:
+                    await self.client.send_message(channel_id, message_text)
+                return True
+                
+            except FloodWaitError as e:
+                logging.warning(f"Flood wait error: {e.seconds} seconds")
+                await asyncio.sleep(e.seconds)
+                return False
+                
+            except Exception as e:
+                logging.error(f"Error sending message to channel {channel_id} (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                else:
+                    return False
     
     async def disconnect(self) -> None:
-        """Disconnect from Telegram."""
+        """Disconnect from Telegram with proper cleanup."""
         try:
-            await self.client.disconnect()
+            if self.client.is_connected():
+                await self.client.disconnect()
             logging.info("Disconnected from Telegram")
+            
+            # Clean up session files after disconnect
+            await asyncio.sleep(1)  # Give time for files to be released
+            self._cleanup_current_session()
+            
         except Exception as e:
             logging.error(f"Error disconnecting: {e}")
+    
+    def _cleanup_current_session(self):
+        """Clean up current session files."""
+        try:
+            session_files = [
+                f"{self.session_name}.session",
+                f"{self.session_name}.session-journal"
+            ]
+            
+            for filename in session_files:
+                file_path = Path(filename)
+                if file_path.exists():
+                    try:
+                        file_path.unlink()
+                        logging.info(f"Cleaned up session file: {filename}")
+                    except Exception as e:
+                        logging.warning(f"Could not remove {filename}: {e}")
+        except Exception as e:
+            logging.warning(f"Error cleaning up session files: {e}")

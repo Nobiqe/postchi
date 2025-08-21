@@ -250,6 +250,29 @@ class MultiChannelProcessor:
                 if recent_messages:
                     last_id = recent_messages[0]['id']
                     print(f"   Initialized monitoring from message ID: {last_id}")
+                    
+                    # SAVE THE BASELINE TO DATABASE - This is the fix
+                    # Create a dummy processed message to establish the baseline
+                    from database import ProcessedMessage
+                    baseline_message = ProcessedMessage(
+                        message_id=last_id,
+                        source_channel_id=mapping.source_channel_id,
+                        target_channel_id=mapping.target_channel_id,
+                        mapping_id=mapping.id,
+                        original_message="[BASELINE - DO NOT POST]",
+                        processed_message="[BASELINE - DO NOT POST]",
+                        date=recent_messages[0]['date'],
+                        has_media=False,
+                        media_type=None,
+                        media_path=None,
+                        media_file_id=None
+                    )
+                    
+                    # Save and immediately mark as posted so it won't be processed
+                    if self.db_manager.save_processed_message(baseline_message):
+                        self.db_manager.mark_as_posted(last_id, mapping.id)
+                        print(f"   ✅ Baseline saved - now monitoring for new messages only")
+                    
                     return  # Skip processing on first run, just establish baseline
                 else:
                     print(f"   No messages found in channel")
@@ -279,46 +302,41 @@ class MultiChannelProcessor:
                     # First process and save to database
                     await self._process_single_message(msg_data, mapping)
                     
-                    # Then get the saved message and post it
-                    unposted_messages = self.db_manager.get_unposted_messages(mapping.id, 1)
-                    print(f"    Found {len(unposted_messages)} unposted messages")
+                    # Then get the specific message we just processed
+                    specific_message = self.db_manager.get_specific_unposted_message(mapping.id, msg_data['id'])
+                    print(f"    Looking for message ID: {msg_data['id']}")
                     
-                    if unposted_messages:
-                        message = unposted_messages[0]
-                        print(f"    Unposted message ID: {message.message_id}")
+                    if specific_message:
+                        message = specific_message
+                        print(f"    Found specific unposted message ID: {message.message_id}")
+                        print(f"    📤 Sending to channel {mapping.target_channel_id}")
+                        print(f"    Message content: '{message.processed_message[:100]}...'")
                         
-                        # Check if this is the message we just processed
-                        if message.message_id == msg_data['id']:
-                            print(f"    📤 Sending to channel {mapping.target_channel_id}")
-                            print(f"    Message content: '{message.processed_message[:100]}...'")
-                            
-                            # Send with media if available
-                            if message.has_media and message.media_path:
-                                print(f"    🎬 Including media: {message.media_path}")
-                                success = await self.telegram_client.send_message(
-                                    mapping.target_channel_id, 
-                                    message.processed_message,
-                                    message.media_path
-                                )
-                            else:
-                                success = await self.telegram_client.send_message(
-                                    mapping.target_channel_id, 
-                                    message.processed_message
-                                )
-                            
-                            if success:
-                                self.db_manager.mark_as_posted(message.message_id, mapping.id)
-                                print(f"    ✅ Successfully posted message {message.message_id}")
-                                if message.has_media:
-                                    print(f"    ✅ Media forwarded successfully")
-                                logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
-                            else:
-                                print(f"    ❌ Failed to send message {message.message_id}")
-                                logging.error(f"Failed to send message {message.message_id} for mapping {mapping.id}")
+                        # Send with media if available
+                        if message.has_media and message.media_path:
+                            print(f"    🎬 Including media: {message.media_path}")
+                            success = await self.telegram_client.send_message(
+                                mapping.target_channel_id, 
+                                message.processed_message,
+                                message.media_path
+                            )
                         else:
-                            print(f"    ⚠️  Message ID mismatch: expected {msg_data['id']}, got {message.message_id}")
+                            success = await self.telegram_client.send_message(
+                                mapping.target_channel_id, 
+                                message.processed_message
+                            )
+                        
+                        if success:
+                            self.db_manager.mark_as_posted(message.message_id, mapping.id)
+                            print(f"    ✅ Successfully posted message {message.message_id}")
+                            if message.has_media:
+                                print(f"    ✅ Media forwarded successfully")
+                            logging.info(f"Posted message {message.message_id} immediately for mapping {mapping.id}")
+                        else:
+                            print(f"    ❌ Failed to send message {message.message_id}")
+                            logging.error(f"Failed to send message {message.message_id} for mapping {mapping.id}")
                     else:
-                        print(f"    ❌ No unposted messages found after processing")
+                        print(f"    ❌ No unposted message found for ID: {msg_data['id']}")
                 else:
                     print(f"    ⭕ Skipping message (doesn't match criteria)")
                     

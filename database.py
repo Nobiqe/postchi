@@ -39,6 +39,10 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
+            # Add database optimization settings
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            
             # Enhanced processed_messages table with media fields
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_messages (
@@ -64,7 +68,8 @@ class DatabaseManager:
             
             # Check if media columns exist, add them if not (for existing databases)
             cursor.execute("PRAGMA table_info(processed_messages)")
-            columns = [column[1] for column in cursor.fetchall()]
+            table_info = cursor.fetchall()
+            columns = [column[1] for column in table_info if len(column) > 1]
             
             if 'has_media' not in columns:
                 cursor.execute("ALTER TABLE processed_messages ADD COLUMN has_media BOOLEAN DEFAULT 0")
@@ -264,3 +269,39 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"Error getting channels: {e}")
             return []
+        
+
+    def get_specific_unposted_message(self, mapping_id: str, message_id: int) -> Optional[ProcessedMessage]:
+        """Get a specific unposted message by mapping_id and message_id."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT message_id, source_channel_id, target_channel_id, mapping_id,
+                        original_message, processed_message, date_received, posted,
+                        has_media, media_type, media_path, media_file_id
+                    FROM processed_messages 
+                    WHERE posted = 0 AND mapping_id = ? AND message_id = ?
+                    LIMIT 1
+                """, (mapping_id, message_id))
+                
+                row = cursor.fetchone()
+                if row:
+                    return ProcessedMessage(
+                        message_id=row[0],
+                        source_channel_id=row[1],
+                        target_channel_id=row[2],
+                        mapping_id=row[3],
+                        original_message=row[4],
+                        processed_message=row[5],
+                        date=datetime.fromisoformat(row[6]) if row[6] else datetime.now(),
+                        posted=bool(row[7]),
+                        has_media=bool(row[8]) if row[8] is not None else False,
+                        media_type=row[9],
+                        media_path=row[10],
+                        media_file_id=row[11]
+                    )
+                return None
+        except Exception as e:
+            logging.error(f"Error getting specific unposted message: {e}")
+            return None  
