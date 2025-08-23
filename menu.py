@@ -279,43 +279,42 @@ class MenuSystem:
             return False
     
     async def start_processing(self) -> None:
-        """Start the message processing with media support options."""
-        print("\n--- Starting Message Processing ---")
-        
-        if not self.processor:
-            await self._initialize_processor()
-        
-        if not self.processor:
-            print("Cannot start processing without proper initialization.")
-            return
-        
-        active_mappings = self.config_manager.get_active_mappings()
-        if not active_mappings:
-            print("No active channel mappings found!")
-            return
-        
-        print(f"Found {len(active_mappings)} active mappings:")
-        for mapping in active_mappings:
-            print(f"  - {mapping.id}: {mapping.source_channel_name} -> {mapping.target_channel_name}")
-        
-        # Processing type selection
-        print("\nProcessing options:")
-        print("1. Process historical messages only (last 7 days)")
-        print("2. Start real-time monitoring (immediate forwarding)")
-        print("3. Both (recommended for first run)")
-        
-        processing_choice = input("Enter choice (1-3): ").strip()
-        
-        # Media handling configuration
-        print("\n--- Media Configuration ---")
-        include_media = input("Do you want to download and forward media files? (y/n): ").strip().lower() == 'y'
-        
-        # AI Agent Configuration
-        print("\n--- AI Agent Configuration ---")
-        use_ai_agent = input("Do you want to use AI agent to edit text? (y/n): ").strip().lower() == 'y'
-
-        ai_system_prompt = None
-        if use_ai_agent:
+            """Start the message processing with media support options."""
+            print("\n--- Starting Message Processing ---")
+            
+            if not self.processor:
+                await self._initialize_processor()
+            
+            if not self.processor:
+                print("Cannot start processing without proper initialization.")
+                return
+            
+            active_mappings = self.config_manager.get_active_mappings()
+            if not active_mappings:
+                print("No active channel mappings found!")
+                return
+            
+            print(f"Found {len(active_mappings)} active mappings:")
+            for mapping in active_mappings:
+                print(f"  - {mapping.id}: {mapping.source_channel_name} -> {mapping.target_channel_name}")
+            
+            # Processing type selection
+            print("\nProcessing options:")
+            print("1. Process historical messages only (last 7 days)")
+            print("2. Start real-time monitoring (immediate forwarding)")
+            print("3. Both (recommended for first run)")
+            
+            processing_choice = input("Enter choice (1-3): ").strip()
+            
+            # Media handling configuration
+            print("\n--- Media Configuration ---")
+            include_media = input("Do you want to download and forward media files? (y/n): ").strip().lower() == 'y'
+            
+            # Modified AI Agent Configuration - Always active for summarization
+            print("\n--- AI Agent Configuration ---")
+            print("AI Agent will be automatically enabled for caption summarization (600-800 characters)")
+            
+            # Check AI connection
             if not self.config_manager.ai_config.api_key:
                 print("Error: AI API key not configured! Please configure AI settings first.")
                 return
@@ -334,108 +333,109 @@ class MenuSystem:
                 print(f"Error connecting to AI: {e}")
                 return
             
-            print("\nEnter system prompt for AI agent:")
-            print("Example: 'Rewrite this text to be more professional and add trading insights'")
-            ai_system_prompt = input("System prompt: ").strip()
+            # Modified question: Ask if AI should be applied to non-caption messages too
+            apply_ai_to_all = input("Do you want to apply AI processing to non-caption messages as well? (y/n): ").strip().lower() == 'y'
             
-            if not ai_system_prompt:
-                ai_system_prompt = "Please rewrite this text to be more professional and suitable for a trading channel."
-
-        # Footer Configuration
-        custom_footer = None
-        while True:
-            print("\n--- Footer Configuration ---")
-            print("Choose footer style:")
-            print("1. Saved footers")
-            print("2. Create Custom footer")
-            print("3. No footer")
+            # Set summarization prompt
+            ai_system_prompt = "Please summarize and rewrite this text to be between 600-800 characters while keeping the main message and important details. Make it professional and suitable for a Telegram channel."
             
-            footer_choice = input("Enter choice (1-3): ").strip()
-            
-            if footer_choice == "1":
-                selected_footer = self.show_saved_footers_menu()
-                if selected_footer is not None:
-                    custom_footer = selected_footer
+            # Footer Configuration
+            custom_footer = None
+            while True:
+                print("\n--- Footer Configuration ---")
+                print("Choose footer style:")
+                print("1. Saved footers")
+                print("2. Create Custom footer")
+                print("3. No footer")
+                
+                footer_choice = input("Enter choice (1-3): ").strip()
+                
+                if footer_choice == "1":
+                    selected_footer = self.show_saved_footers_menu()
+                    if selected_footer is not None:
+                        custom_footer = selected_footer
+                        break
+                elif footer_choice == "2":
+                    custom_footer = self.create_custom_footer()
                     break
-            elif footer_choice == "2":
-                custom_footer = self.create_custom_footer()
-                break
-            elif footer_choice == "3":
-                custom_footer = ""
-                break
-            else:
-                print("Invalid choice. Please enter 1-3.")
+                elif footer_choice == "3":
+                    custom_footer = ""
+                    break
+                else:
+                    print("Invalid choice. Please enter 1-3.")
 
-        # Mode calculation with media support (now 36 modes total)
-        mode_base = 0
-        if processing_choice == "1":  # Historical
+            # Mode calculation (simplified since AI is always on)
             mode_base = 0
-        elif processing_choice == "2":  # Real-time
-            mode_base = 12
-        elif processing_choice == "3":  # Both
-            mode_base = 24
+            if processing_choice == "1":  # Historical
+                mode_base = 0
+            elif processing_choice == "2":  # Real-time
+                mode_base = 12
+            elif processing_choice == "3":  # Both
+                mode_base = 24
 
-        media_offset = 0 if include_media else 6
-        ai_offset = 0 if use_ai_agent else 3
-        footer_offset = int(footer_choice) - 1
-        current_mode = mode_base + media_offset + ai_offset + footer_offset + 1
+            media_offset = 0 if include_media else 6
+            ai_scope_offset = 0 if apply_ai_to_all else 3  # AI scope instead of AI on/off
+            footer_offset = int(footer_choice) - 1
+            current_mode = mode_base + media_offset + ai_scope_offset + footer_offset + 1
 
-        print(f"\nMode {current_mode}/36:")
-        print(f"   Processing: {['Historical', 'Real-time', 'Both'][int(processing_choice)-1]}")
-        print(f"   Media: {'Enabled' if include_media else 'Disabled'}")
-        print(f"   AI Agent: {'Enabled' if use_ai_agent else 'Disabled'}")
-        print(f"   Footer: {['Saved', 'Custom', 'None'][int(footer_choice)-1]}")
-        
-        # Create session configuration
-        session_config = {
-            'use_ai_agent': use_ai_agent,
-            'ai_system_prompt': ai_system_prompt,
-            'custom_footer': custom_footer,
-            'include_media': include_media,
-            'mode': current_mode
-        }
-        
-        try:
-            if processing_choice in ['1', '3']:  # Historical processing
-                print(f"\nProcessing historical messages (Mode {current_mode})...")
-                for mapping in active_mappings:
-                    print(f"Processing {mapping.id}...")
-                    
-                    since_date = datetime.now() - timedelta(days=7)
-                    messages = await self.processor.telegram_client.get_channel_messages(
-                        mapping.source_channel_id, since_date=since_date
-                    )
-                    
-                    matching_count = 0
-                    for msg_data in messages:
-                        if self.processor._message_matches_criteria(msg_data['text'], mapping):
-                            matching_count += 1
-                    
-                    print(f"  Found {len(messages)} total messages, {matching_count} matching criteria")
-                    
-                    await self._process_mapping_with_config(mapping, session_config, historical=True)
-                
-                print("Historical processing completed!")
+            print(f"\nMode {current_mode}/36:")
+            print(f"   Processing: {['Historical', 'Real-time', 'Both'][int(processing_choice)-1]}")
+            print(f"   Media: {'Enabled' if include_media else 'Disabled'}")
+            print(f"   AI Agent: Always Active (Summarization)")
+            print(f"   AI Scope: {'All Messages' if apply_ai_to_all else 'Captions Only'}")
+            print(f"   Footer: {['Saved', 'Custom', 'None'][int(footer_choice)-1]}")
             
-            if processing_choice in ['2', '3']:  # Real-time monitoring
-                print(f"\nStarting real-time monitoring (Mode {current_mode})...")
-                print("Messages will be forwarded immediately when detected.")
-                print("\n" + "="*60)
-                print("MONITORING ACTIVE - Choose an option:")
-                print("  Press '5' + Enter: Stop and return to main menu")
-                print("  Press Ctrl+C: Force stop")
-                print("="*60)
-                
-                self.processor.session_config = session_config
-                await self._start_monitoring_with_exit()
+            # Create session configuration
+            session_config = {
+                'use_ai_agent': True,  # Always True now
+                'ai_system_prompt': ai_system_prompt,
+                'custom_footer': custom_footer,
+                'include_media': include_media,
+                'apply_ai_to_all': apply_ai_to_all,  # New setting
+                'mode': current_mode
+            }
             
-        except KeyboardInterrupt:
-            print("\nStopping monitoring...")
-            if self.processor:
-                self.processor.stop_monitoring()
-        except Exception as e:
-            logging.error(f"Error during processing (Mode {current_mode}): {e}")
-            print(f"Error during processing: {e}")
+            try:
+                if processing_choice in ['1', '3']:  # Historical processing
+                    print(f"\nProcessing historical messages (Mode {current_mode})...")
+                    for mapping in active_mappings:
+                        print(f"Processing {mapping.id}...")
+                        
+                        since_date = datetime.now() - timedelta(days=7)
+                        messages = await self.processor.telegram_client.get_channel_messages(
+                            mapping.source_channel_id, since_date=since_date
+                        )
+                        
+                        matching_count = 0
+                        for msg_data in messages:
+                            if self.processor._message_matches_criteria(msg_data['text'], mapping):
+                                matching_count += 1
+                        
+                        print(f"  Found {len(messages)} total messages, {matching_count} matching criteria")
+                        
+                        await self._process_mapping_with_config(mapping, session_config, historical=True)
+                    
+                    print("Historical processing completed!")
+                
+                if processing_choice in ['2', '3']:  # Real-time monitoring
+                    print(f"\nStarting real-time monitoring (Mode {current_mode})...")
+                    print("Messages will be summarized and forwarded immediately when detected.")
+                    print("\n" + "="*60)
+                    print("MONITORING ACTIVE - Choose an option:")
+                    print("  Press '5' + Enter: Stop and return to main menu")
+                    print("  Press Ctrl+C: Force stop")
+                    print("="*60)
+                    
+                    self.processor.session_config = session_config
+                    await self._start_monitoring_with_exit()
+                
+            except KeyboardInterrupt:
+                print("\nStopping monitoring...")
+                if self.processor:
+                    self.processor.stop_monitoring()
+            except Exception as e:
+                logging.error(f"Error during processing (Mode {current_mode}): {e}")
+                print(f"Error during processing: {e}")
 
     async def _start_monitoring_with_exit(self) -> None:
         """Start monitoring with option to exit gracefully."""

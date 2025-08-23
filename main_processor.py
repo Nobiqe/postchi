@@ -99,73 +99,154 @@ class MultiChannelProcessor:
         return result
     
     async def _process_single_message(self, msg_data: Dict[str, Any], mapping: ChannelMapping) -> None:
-        """Process a single message with proper media handling."""
+            """Process a single message with smart AI processing based on content length and media."""
+            try:
+                # Check if already processed
+                last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
+                if last_id and msg_data['id'] <= last_id:
+                    return
+                
+                # Get session config
+                prompt_to_use = mapping.prompt_template
+                custom_footer = None
+                
+                # Determine if AI processing is needed
+                should_use_ai = False
+                text_length = len(msg_data['text']) if msg_data['text'] else 0
+                
+                if hasattr(self, 'session_config'):
+                    custom_footer = self.session_config['custom_footer']
+                    
+                    # Always process captions (messages with media)
+                    if msg_data.get('has_media', False):
+                        should_use_ai = True  # Always process captions
+                    elif self.session_config.get('apply_ai_to_all', False):
+                        # Only apply AI to non-caption messages if user requested it
+                        should_use_ai = True
+                    
+                    if should_use_ai and self.session_config['ai_system_prompt']:
+                        prompt_to_use = self.session_config['ai_system_prompt']
+
+                # Process text
+                if should_use_ai:
+                    print(f"    🤖 Processing with AI (length: {text_length})")
+                    processed_text = await self.ai_processor.process_message(
+                        msg_data['text'], 
+                        prompt_to_use,
+                        custom_footer
+                    )
+                    if not processed_text:
+                        # Fallback to original if AI fails
+                        processed_text = msg_data['text']
+                        if custom_footer:
+                            processed_text += custom_footer
+                else:
+                    print(f"    📝 Using original text (length: {text_length})")
+                    processed_text = msg_data['text']
+                    if hasattr(self, 'session_config') and self.session_config.get('custom_footer'):
+                        processed_text += self.session_config['custom_footer']
+        
+                if processed_text:
+                    # Handle media download if enabled and present
+                    media_path = None
+                    if (hasattr(self, 'session_config') and 
+                        self.session_config.get('include_media') and 
+                        msg_data.get('has_media')):
+                        
+                        print(f"    🎬 Downloading media for message {msg_data['id']}")
+                        media_path = await self.telegram_client.download_media(
+                            msg_data['id'], 
+                            mapping.source_channel_id, 
+                            msg_data.get('media_file_id')
+                        )
+                        if media_path:
+                            print(f"    ✅ Media downloaded to: {media_path}")
+                        else:
+                            print(f"    ❌ Failed to download media")
+
+                    # Save to database with media info
+                    message = ProcessedMessage(
+                        message_id=msg_data['id'],
+                        source_channel_id=mapping.source_channel_id,
+                        target_channel_id=mapping.target_channel_id,
+                        mapping_id=mapping.id,
+                        original_message=msg_data['text'],
+                        processed_message=processed_text,
+                        date=msg_data['date'],
+                        has_media=msg_data.get('has_media', False),
+                        media_type=msg_data.get('media_type'),
+                        media_path=media_path,
+                        media_file_id=msg_data.get('media_file_id')
+                    )
+                    
+                    if self.db_manager.save_processed_message(message):
+                        action = "AI-processed" if should_use_ai else "Original"
+                        logging.info(f"{action} and saved message {msg_data['id']} for mapping {mapping.id}")
+                    else:
+                        logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
+                
+            except Exception as e:
+                logging.error(f"Error processing message {msg_data['id']} for mapping {mapping.id}: {e}")
+
+    async def _process_single_message_with_config(self, msg_data, mapping, session_config):
+        """Process a single message with session configuration including smart AI processing."""
         try:
-            # Check if already processed
             last_id = self.db_manager.get_last_message_id(mapping.source_channel_id, mapping.id)
             if last_id and msg_data['id'] <= last_id:
                 return
             
-            # Use session config if available
-            prompt_to_use = mapping.prompt_template
-            custom_footer = None
+            # Handle media download if enabled
+            media_path = None
+            if session_config['include_media'] and msg_data.get('has_media'):
+                media_path = await self.telegram_client.download_media(
+                    msg_data['id'], mapping.source_channel_id, msg_data.get('media_file_id')
+                )
             
-            if hasattr(self, 'session_config'):
-                if self.session_config['use_ai_agent'] and self.session_config['ai_system_prompt']:
-                    prompt_to_use = f"{self.session_config['ai_system_prompt']}\n\nOriginal text: {{original_text}}\n\nPlease provide only the rewritten text."
-                custom_footer = self.session_config['custom_footer']
-
-            # Process text with AI or use original
-            if hasattr(self, 'session_config') and not self.session_config['use_ai_agent']:
-                processed_text = msg_data['text']  # Use original text
-                if self.session_config.get('custom_footer'):
-                    processed_text += self.session_config['custom_footer']
-            else:
-                # Process with AI
+            # Determine if AI processing should be applied
+            text_length = len(msg_data['text']) if msg_data['text'] else 0
+            should_use_ai = False
+            
+            if session_config.get('apply_ai_to_all', False):
+                # Apply AI to all messages if user requested
+                should_use_ai = True
+            elif msg_data.get('has_media', False):
+                # Always process captions (messages with media)
+                should_use_ai = True
+            
+            # Process text with AI if needed
+            processed_text = msg_data['text']
+            if should_use_ai and session_config['ai_system_prompt']:
+                prompt_to_use = session_config['ai_system_prompt']
                 processed_text = await self.ai_processor.process_message(
                     msg_data['text'], 
                     prompt_to_use,
-                    custom_footer
-                )            
-      
-            if processed_text:
-                # Handle media download if enabled and present
-                media_path = None
-                if (hasattr(self, 'session_config') and 
-                    self.session_config.get('include_media') and 
-                    msg_data.get('has_media')):
-                    
-                    print(f"    🎬 Downloading media for message {msg_data['id']}")
-                    media_path = await self.telegram_client.download_media(
-                        msg_data['id'], 
-                        mapping.source_channel_id, 
-                        msg_data.get('media_file_id')
-                    )
-                    if media_path:
-                        print(f"    ✅ Media downloaded to: {media_path}")
-                    else:
-                        print(f"    ❌ Failed to download media")
-
-                # Save to database with media info
-                message = ProcessedMessage(
-                    message_id=msg_data['id'],
-                    source_channel_id=mapping.source_channel_id,
-                    target_channel_id=mapping.target_channel_id,
-                    mapping_id=mapping.id,
-                    original_message=msg_data['text'],
-                    processed_message=processed_text,
-                    date=msg_data['date'],
-                    has_media=msg_data.get('has_media', False),
-                    media_type=msg_data.get('media_type'),
-                    media_path=media_path,
-                    media_file_id=msg_data.get('media_file_id')
-                )
-                
-                if self.db_manager.save_processed_message(message):
-                    logging.info(f"Processed and saved message {msg_data['id']} for mapping {mapping.id}")
-                else:
-                    logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
+                    session_config['custom_footer']
+                ) or msg_data['text']
+            elif session_config['custom_footer']:
+                processed_text += session_config['custom_footer']
             
+            # Create ProcessedMessage with media info
+            from database import ProcessedMessage
+            message = ProcessedMessage(
+                message_id=msg_data['id'],
+                source_channel_id=mapping.source_channel_id,
+                target_channel_id=mapping.target_channel_id,
+                mapping_id=mapping.id,
+                original_message=msg_data['text'],
+                processed_message=processed_text,
+                date=msg_data['date'],
+                has_media=msg_data.get('has_media', False),
+                media_type=msg_data.get('media_type'),
+                media_path=media_path,
+                media_file_id=msg_data.get('media_file_id')
+            )
+            
+            if self.db_manager.save_processed_message(message):
+                action = "AI-processed" if should_use_ai else "Original"
+                logging.info(f"{action} and saved message {msg_data['id']} for mapping {mapping.id}")
+            else:
+                logging.error(f"Failed to save message {msg_data['id']} for mapping {mapping.id}")
+        
         except Exception as e:
             logging.error(f"Error processing message {msg_data['id']} for mapping {mapping.id}: {e}")
     
