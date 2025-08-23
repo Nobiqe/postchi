@@ -11,3 +11,5 @@ media/
 *.session
 *.jpg
 *.mp4
+*.db-shm
+*.db-wal

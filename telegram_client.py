@@ -14,8 +14,8 @@ class TelegramChannelClient:
     """Enhanced Telegram client with media support and database lock prevention."""
     
     def __init__(self, api_id: str, api_hash: str, phone_number: str):
-        # Create unique session name to avoid conflicts
-        session_name = f'session_{phone_number}_{int(time.time())}'
+        # Use consistent session name instead of unique ones
+        session_name = f'session_{phone_number.replace("+", "")}'
         self.client = TelegramClient(session_name, api_id, api_hash)
         self.phone_number = phone_number
         self.session_name = session_name
@@ -23,39 +23,19 @@ class TelegramChannelClient:
         self.media_dir.mkdir(exist_ok=True)
     
     async def initialize(self) -> bool:
-        """Initialize and authenticate the client with retry logic."""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Clean up any existing session files first
-                self._cleanup_session_files()
-                
-                await self.client.start(phone=self.phone_number)
-                logging.info("Telegram client initialized successfully")
-                return True
-            except Exception as e:
-                logging.error(f"Error initializing Telegram client (attempt {attempt + 1}): {e}")
-                
-                if "database is locked" in str(e).lower():
-                    # Wait and try again with a new session name
-                    await asyncio.sleep(2)
-                    await self.disconnect()
-                    self.session_name = f'session_{self.phone_number}_{int(time.time())}_{attempt}'
-                    self.client = TelegramClient(self.session_name, self.client.api_id, self.client.api_hash)
-                    continue
-                
-                if attempt == max_retries - 1:
-                    print(f"Connection failed after {max_retries} attempts: {e}")
-                    print("Please check:")
-                    print("1. Internet connection")
-                    print("2. Telegram API credentials")
-                    print("3. Phone number format (+1234567890)")
-                    print("4. Close any other instances of this program")
-                    return False
-                
-                await asyncio.sleep(1)
-        
-        return False
+        """Initialize and authenticate the client with session reuse."""
+        try:
+            await self.client.start(phone=self.phone_number)
+            logging.info("Telegram client initialized successfully")
+            return True
+        except Exception as e:
+            logging.error(f"Error initializing Telegram client: {e}")
+            print(f"Connection failed: {e}")
+            print("Please check:")
+            print("1. Internet connection")
+            print("2. Telegram API credentials")
+            print("3. Phone number format (+1234567890)")
+            return False
     
     def _cleanup_session_files(self):
         """Clean up old session files to prevent conflicts."""
@@ -228,27 +208,24 @@ class TelegramChannelClient:
         return '.bin'
     
     async def send_message(self, channel_id: int, message_text: str, media_path: Optional[str] = None) -> bool:
-        """Send a message to a channel with optional media and caption length handling."""
+        """Send a message to a channel with optional media as single post."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 if media_path and Path(media_path).exists():
-                    # Telegram caption limit is 1024 characters
+                    # For media posts, use caption (max 1024 chars)
                     if len(message_text) > 1024:
-                        # Send media with truncated caption, then send remaining text
-                        caption = message_text[:1020] + "..."  # Leave space for "..."
-                        remaining_text = message_text[1020:]
-                        
-                        # Send media with truncated caption
+                        # Truncate to fit in single caption
+                        caption = message_text[:1020] + "..."
                         await self.client.send_file(channel_id, media_path, caption=caption)
-                        
-                        # Send remaining text as separate message if significant
-                        if len(remaining_text.strip()) > 10:
-                            await asyncio.sleep(1)  # Small delay between messages
-                            await self.client.send_message(channel_id, remaining_text)
                     else:
                         await self.client.send_file(channel_id, media_path, caption=message_text)
                 else:
+                    # For text-only posts, Telegram allows up to 4096 characters
+                    if len(message_text) > 4096:
+                        # Truncate to fit in single message
+                        message_text = message_text[:4090] + "..."
+                    
                     await self.client.send_message(channel_id, message_text)
                 return True
                 
